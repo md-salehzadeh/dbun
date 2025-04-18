@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -50,9 +51,10 @@ type AppModel struct {
 	modalTargetCol int  // Target col for modal edit
 	
 	// Filtering state
-	filtering      bool  // Whether filtering is active
-	filterBuffer   string // Filter input text
-	filteredTables []string // List of tables that match the filter
+	filtering        bool      // Whether filtering is active
+	filterBuffer     string    // Filter input text
+	filteredTables   []string  // List of tables that match the filter
+	matchPositions   map[string][]int // Positions of matched characters for highlighting
 }
 
 // Initialize the app model with database connection
@@ -72,6 +74,7 @@ func NewAppModel() (AppModel, error) {
 		tableData:      make(map[string][]model.RowData),
 		tableMetadata:  make(map[string][]model.ColumnMetadata),
 		tableIndices:   make(map[string][]string),
+		matchPositions: make(map[string][]int),
 		connected:      false,
 	}
 
@@ -136,6 +139,7 @@ func NewAppModelWithSampleData() AppModel {
 		tableData:      make(map[string][]model.RowData),
 		tableMetadata:  make(map[string][]model.ColumnMetadata),
 		tableIndices:   make(map[string][]string),
+		matchPositions: make(map[string][]int),
 	}
 
 	// Convert sample data to RowData format
@@ -309,6 +313,7 @@ func (m *AppModel) handleFilterModeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filtering = false
 		m.filterBuffer = ""
 		m.filteredTables = nil
+		m.matchPositions = make(map[string][]int) // Reset match positions
 		return m, nil
 
 	case "enter":
@@ -337,20 +342,47 @@ func (m *AppModel) handleFilterModeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // Apply the current filter to the tables list
 func (m *AppModel) applyFilter() {
+	// Reset match positions
+	m.matchPositions = make(map[string][]int)
+	
 	if m.filterBuffer == "" {
 		// If filter is empty, show all tables
 		m.filteredTables = nil
 		return
 	}
 
-	// Filter the tables list based on case-insensitive substring match
-	m.filteredTables = []string{}
-	filterLower := strings.ToLower(m.filterBuffer)
+	// Filter the tables list based on fuzzy matching
+	type matchResult struct {
+		table      string
+		score      int
+		positions  []int
+	}
 	
+	var matches []matchResult
+	
+	// Find all tables that match the filter and their scores
 	for _, table := range m.tables {
-		if strings.Contains(strings.ToLower(table), filterLower) {
-			m.filteredTables = append(m.filteredTables, table)
+		score, positions := fuzzyMatch(m.filterBuffer, table)
+		if score > 0 { // 0 means no match now
+			matches = append(matches, matchResult{
+				table:     table,
+				score:     score,
+				positions: positions,
+			})
 		}
+	}
+	
+	// Sort matches by score (higher is better)
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].score > matches[j].score
+	})
+	
+	// Extract sorted table names and store match positions
+	m.filteredTables = make([]string, len(matches))
+	for i, match := range matches {
+		m.filteredTables[i] = match.table
+		// Store positions for highlighting
+		m.matchPositions[match.table] = match.positions
 	}
 
 	// Reset selection if needed
@@ -361,6 +393,118 @@ func (m *AppModel) applyFilter() {
 	} else {
 		m.selectedIdx = 0
 	}
+}
+
+// fuzzyMatch provides a better fuzzy matching algorithm
+// Returns a score (higher is better, 0 means no match) and match positions
+func fuzzyMatch(pattern, str string) (int, []int) {
+    // Convert to lowercase for case-insensitive matching
+    patternLower := strings.ToLower(pattern)
+    strLower := strings.ToLower(str)
+    
+    // Empty pattern matches everything with score 0
+    if len(patternLower) == 0 {
+        return 0, nil
+    }
+    
+    // If the pattern is longer than the string, it can't match
+    if len(patternLower) > len(strLower) {
+        return 0, nil
+    }
+    
+    // Direct substring match gets highest score
+    if strings.Contains(strLower, patternLower) {
+        // Find the positions of the exact substring match
+        startIdx := strings.Index(strLower, patternLower)
+        positions := make([]int, len(patternLower))
+        for i := range positions {
+            positions[i] = startIdx + i
+        }
+        // Very high score for exact substring matches
+        return 1000 + (len(patternLower) * 10), positions
+    }
+    
+    // Prepare for the more flexible fuzzy match
+    var positions []int
+    patternIdx := 0
+    score := 0
+    consecutiveMatches := 0
+    lastMatchIdx := -1
+    
+    // Check for acronym match (first letter of each word)
+    isWordStart := true
+    acronymPositions := []int{}
+    acronymMatches := 0
+    
+    for i, char := range strLower {
+        // Track word starts (after spaces, underscores, or at beginning)
+        if i == 0 || strLower[i-1] == ' ' || strLower[i-1] == '_' || 
+           (i > 0 && strLower[i-1] >= 'a' && strLower[i-1] <= 'z' && 
+            str[i] >= 'A' && str[i] <= 'Z') {
+            isWordStart = true
+        }
+        
+        // Acronym matching
+        if isWordStart && patternIdx < len(patternLower) && char == rune(patternLower[patternIdx]) {
+            acronymPositions = append(acronymPositions, i)
+            acronymMatches++
+            isWordStart = false
+        } else if isWordStart {
+            isWordStart = false
+        }
+        
+        // Regular fuzzy match
+        if patternIdx < len(patternLower) && char == rune(patternLower[patternIdx]) {
+            // Add position to match positions
+            positions = append(positions, i)
+            
+            // Update score based on match quality
+            if lastMatchIdx == i-1 {
+                // Consecutive matches are worth more (increasing bonus)
+                consecutiveMatches++
+                score += 10 + (consecutiveMatches * 5)
+            } else {
+                // Non-consecutive matches still score, but less
+                consecutiveMatches = 0
+                score += 5
+            }
+            
+            // Bonus for matching at word boundaries
+            if i == 0 || strLower[i-1] == ' ' || strLower[i-1] == '_' {
+                score += 20  // Big bonus for word starts
+            } else if i > 0 && strLower[i-1] >= 'a' && strLower[i-1] <= 'z' && 
+                      strLower[i] >= 'A' && strLower[i] <= 'Z' {
+                score += 15  // Bonus for camelCase
+            }
+            
+            lastMatchIdx = i
+            patternIdx++
+            
+            // If we've matched the entire pattern, we're done with this search
+            if patternIdx == len(patternLower) {
+                break
+            }
+        }
+    }
+    
+    // If we matched all pattern characters
+    if patternIdx == len(patternLower) {
+        // Adjust score based on pattern length and string length
+        // Matching a higher percentage of the string is better
+        percentageMatch := float64(len(patternLower)) / float64(len(strLower))
+        score += int(percentageMatch * 100)
+        
+        return score, positions
+    }
+    
+    // If we have a complete acronym match but no full fuzzy match
+    if acronymMatches == len(patternLower) {
+        // Acronym matches score well but not as well as fuzzy matches
+        return 500 + (acronymMatches * 10), acronymPositions
+    }
+    
+    // No match
+    return 0, nil
 }
 
 // Helper method to get either filtered tables or all tables

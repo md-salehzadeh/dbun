@@ -379,10 +379,12 @@ func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx
 		if maxTextWidth < 0 {
 			maxTextWidth = 0
 		}
-		truncatedTableName := model.TruncateWithEllipsis(tableName, maxTextWidth)
+		
+		// Create a fixed-width table name - no highlighting
+		tableNameDisplay := model.TruncateWithEllipsis(tableName, maxTextWidth)
 
 		// Render the line
-		content.WriteString(fmt.Sprintf("%s %s\n", cursor, lineStyle.Render(truncatedTableName)))
+		content.WriteString(fmt.Sprintf("%s %s\n", cursor, lineStyle.Render(tableNameDisplay)))
 		currentContentHeight += 1
 		numItemsRendered++
 	}
