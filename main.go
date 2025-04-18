@@ -87,8 +87,10 @@ func (m model) View() string {
 		sidebarWidth = 20
 	}
 
-	buttonHeight := 3                         // Fixed height for buttons
-	mainHeight := m.height - buttonHeight - 2 // Deduct buttons and status bar heights
+	// Calculate height for main content area
+	buttonHeightWithPadding := 3              // Height for the tab bar
+	statusBarHeight := 1                      // Height for status bar
+	mainHeight := m.height - buttonHeightWithPadding - statusBarHeight - 2 // Account for borders
 
 	// Styles for active and inactive borders
 	activeBorderColor := lipgloss.Color("#FF00FF")   // Magenta for active box
@@ -125,41 +127,47 @@ func (m model) View() string {
 			BorderForeground(activeBorderColor)
 	}
 
-	// Button Style
-	buttonWidth := int(float64(m.width-4) / 3.0) // Divide space among three buttons
-	buttonStyle := lipgloss.NewStyle().
-		Width(buttonWidth).
-		Height(buttonHeight).
-		Border(lipgloss.RoundedBorder()).
-		Align(lipgloss.Center)
-
 	// Button Styles for modes
-	var dataButtonStyle, structureButtonStyle, indicesButtonStyle lipgloss.Style
+	buttonWidth := int(float64(m.width-6) / 3.0) // Divide space among three buttons, with some extra space
 	activeButtonBorderColor := lipgloss.Color("#FF00FF")
 	inactiveButtonBorderColor := lipgloss.Color("#444444")
+	
+	// Base button style - use tabs style instead of bordered boxes
+	tabStyle := lipgloss.NewStyle().
+		Padding(1, 2).
+		Bold(true).
+		Width(buttonWidth)
 
-	// Set button border colors based on current mode
+	// Prepare button styles based on current mode
+	dataButtonStyle := tabStyle.Copy()
+	structureButtonStyle := tabStyle.Copy()
+	indicesButtonStyle := tabStyle.Copy()
+	
+	// Set active styling based on current mode
 	if m.mode == "Data" {
-		dataButtonStyle = buttonStyle.Copy().
-			BorderForeground(activeButtonBorderColor)
-		structureButtonStyle = buttonStyle.Copy().
-			BorderForeground(inactiveButtonBorderColor)
-		indicesButtonStyle = buttonStyle.Copy().
-			BorderForeground(inactiveButtonBorderColor)
+		dataButtonStyle = dataButtonStyle.
+			Foreground(activeButtonBorderColor).
+			Underline(true)
+		structureButtonStyle = structureButtonStyle.
+			Foreground(inactiveButtonBorderColor)
+		indicesButtonStyle = indicesButtonStyle.
+			Foreground(inactiveButtonBorderColor)
 	} else if m.mode == "Structure" {
-		dataButtonStyle = buttonStyle.Copy().
-			BorderForeground(inactiveButtonBorderColor)
-		structureButtonStyle = buttonStyle.Copy().
-			BorderForeground(activeButtonBorderColor)
-		indicesButtonStyle = buttonStyle.Copy().
-			BorderForeground(inactiveButtonBorderColor)
+		dataButtonStyle = dataButtonStyle.
+			Foreground(inactiveButtonBorderColor)
+		structureButtonStyle = structureButtonStyle.
+			Foreground(activeButtonBorderColor).
+			Underline(true)
+		indicesButtonStyle = indicesButtonStyle.
+			Foreground(inactiveButtonBorderColor)
 	} else {
-		dataButtonStyle = buttonStyle.Copy().
-			BorderForeground(inactiveButtonBorderColor)
-		structureButtonStyle = buttonStyle.Copy().
-			BorderForeground(inactiveButtonBorderColor)
-		indicesButtonStyle = buttonStyle.Copy().
-			BorderForeground(activeButtonBorderColor)
+		dataButtonStyle = dataButtonStyle.
+			Foreground(inactiveButtonBorderColor)
+		structureButtonStyle = structureButtonStyle.
+			Foreground(inactiveButtonBorderColor)
+		indicesButtonStyle = indicesButtonStyle.
+			Foreground(activeButtonBorderColor).
+			Underline(true)
 	}
 
 	// Status Bar Style
@@ -224,15 +232,23 @@ func (m model) View() string {
 	mainContent := fmt.Sprintf("Showing %s for: %s", m.mode, m.tables[m.activeTableIdx])
 	mainBoxView := mainBoxStyle.Render(mainContent)
 
-	// Top Buttons for switching views
+	// Top Buttons for switching views - styled as tabs
+	buttonBar := lipgloss.NewStyle().
+		Width(m.width).
+		Padding(1, 0, 0, 2).  // Top, Right, Bottom, Left padding
+		Background(lipgloss.Color("#222222"))
+
 	buttons := lipgloss.JoinHorizontal(lipgloss.Top,
 		dataButtonStyle.Render("Data"),
 		structureButtonStyle.Render("Structure"),
 		indicesButtonStyle.Render("Indices"),
 	)
-
+	
+	buttonSection := buttonBar.Render(buttons)
+	
 	// Combine the main views
-	layout := lipgloss.JoinVertical(lipgloss.Top, buttons,
+	layout := lipgloss.JoinVertical(lipgloss.Top, 
+		buttonSection,
 		lipgloss.JoinHorizontal(lipgloss.Top, sidebarView, mainBoxView),
 	)
 
