@@ -404,28 +404,57 @@ func (m model) View() string {
 func (m model) renderUsersTable() string {
 	var content strings.Builder
 	
-	// Table header
-	headerStyle := lipgloss.NewStyle().Bold(true).Underline(true).Foreground(lipgloss.Color("#00FFFF"))
+	// Define column widths for consistent alignment
+	colWidths := []int{5, 20, 30, 10}
 	
-	// Format the header
-	header := fmt.Sprintf("%-5s %-15s %-25s %-10s\n", "ID", "USERNAME", "EMAIL", "ACTIVE")
-	content.WriteString(headerStyle.Render(header))
+	// Define table styles
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Background(lipgloss.Color("#222222")).
+		Foreground(lipgloss.Color("#FFFFFF"))
+	
+	cellStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF"))
+	
+	rowStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#CCCCCC"))
+	
+	// Add row numbers column at the beginning
+	content.WriteString(fmt.Sprintf("%-4s ", "#"))
+	
+	// Format the headers
+	headers := []string{"ID", "USERNAME", "EMAIL", "ACTIVE"}
+	for i, header := range headers {
+		content.WriteString(headerStyle.Render(fmt.Sprintf("%-*s ", colWidths[i], header)))
+	}
 	content.WriteString("\n")
 	
-	// Table rows
-	for _, user := range m.users {
+	// Table rows with alternating styles
+	for i, user := range m.users {
+		// Row number
+		content.WriteString(fmt.Sprintf("%-4d ", i+1))
+		
+		// Row content with cell styling
 		activeStr := "No"
 		if user.Active {
 			activeStr = "Yes"
 		}
 		
-		row := fmt.Sprintf("%-5d %-15s %-25s %-10s", 
-			user.ID, 
-			user.Username, 
-			user.Email, 
-			activeStr)
-			
-		content.WriteString(row + "\n")
+		// Style based on even/odd row
+		var rowStyleToUse lipgloss.Style
+		if i%2 == 0 {
+			rowStyleToUse = rowStyle
+		} else {
+			rowStyleToUse = cellStyle
+		}
+		
+		// Format each cell
+		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*d ", colWidths[0], user.ID)))
+		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*s ", colWidths[1], user.Username)))
+		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*s ", colWidths[2], user.Email)))
+		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*s ", colWidths[3], activeStr)))
+		
+		content.WriteString("\n")
 	}
 	
 	return content.String()
@@ -434,23 +463,51 @@ func (m model) renderUsersTable() string {
 func (m model) renderOrdersTable() string {
 	var content strings.Builder
 	
-	// Table header
-	headerStyle := lipgloss.NewStyle().Bold(true).Underline(true).Foreground(lipgloss.Color("#00FFFF"))
+	// Define column widths for consistent alignment
+	colWidths := []int{5, 10, 15, 20}
 	
-	// Format the header
-	header := fmt.Sprintf("%-5s %-10s %-15s %-15s\n", "ID", "USER ID", "TOTAL PRICE", "STATUS")
-	content.WriteString(headerStyle.Render(header))
+	// Define table styles
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Background(lipgloss.Color("#222222")).
+		Foreground(lipgloss.Color("#FFFFFF"))
+	
+	cellStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF"))
+	
+	rowStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#CCCCCC"))
+	
+	// Add row numbers column at the beginning
+	content.WriteString(fmt.Sprintf("%-4s ", "#"))
+	
+	// Format the headers
+	headers := []string{"ID", "USER ID", "TOTAL PRICE", "STATUS"}
+	for i, header := range headers {
+		content.WriteString(headerStyle.Render(fmt.Sprintf("%-*s ", colWidths[i], header)))
+	}
 	content.WriteString("\n")
 	
-	// Table rows
-	for _, order := range m.orders {
-		row := fmt.Sprintf("%-5d %-10d $%-14.2f %-15s", 
-			order.ID, 
-			order.UserID, 
-			order.TotalPrice, 
-			order.Status)
-			
-		content.WriteString(row + "\n")
+	// Table rows with alternating styles
+	for i, order := range m.orders {
+		// Row number
+		content.WriteString(fmt.Sprintf("%-4d ", i+1))
+		
+		// Style based on even/odd row
+		var rowStyleToUse lipgloss.Style
+		if i%2 == 0 {
+			rowStyleToUse = rowStyle
+		} else {
+			rowStyleToUse = cellStyle
+		}
+		
+		// Format each cell
+		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*d ", colWidths[0], order.ID)))
+		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*d ", colWidths[1], order.UserID)))
+		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("$%-*.2f ", colWidths[2]-1, order.TotalPrice)))
+		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*s ", colWidths[3], order.Status)))
+		
+		content.WriteString("\n")
 	}
 	
 	return content.String()
@@ -459,23 +516,51 @@ func (m model) renderOrdersTable() string {
 func (m model) renderProductsTable() string {
 	var content strings.Builder
 	
-	// Table header
-	headerStyle := lipgloss.NewStyle().Bold(true).Underline(true).Foreground(lipgloss.Color("#00FFFF"))
+	// Define column widths for consistent alignment
+	colWidths := []int{5, 25, 15, 20}
 	
-	// Format the header
-	header := fmt.Sprintf("%-5s %-20s %-15s %-20s\n", "ID", "NAME", "PRICE", "CATEGORY")
-	content.WriteString(headerStyle.Render(header))
+	// Define table styles
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Background(lipgloss.Color("#222222")).
+		Foreground(lipgloss.Color("#FFFFFF"))
+	
+	cellStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF"))
+	
+	rowStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#CCCCCC"))
+	
+	// Add row numbers column at the beginning
+	content.WriteString(fmt.Sprintf("%-4s ", "#"))
+	
+	// Format the headers
+	headers := []string{"ID", "NAME", "PRICE", "CATEGORY"}
+	for i, header := range headers {
+		content.WriteString(headerStyle.Render(fmt.Sprintf("%-*s ", colWidths[i], header)))
+	}
 	content.WriteString("\n")
 	
-	// Table rows
-	for _, product := range m.products {
-		row := fmt.Sprintf("%-5d %-20s $%-14.2f %-20s", 
-			product.ID, 
-			product.Name, 
-			product.Price, 
-			product.Category)
-			
-		content.WriteString(row + "\n")
+	// Table rows with alternating styles
+	for i, product := range m.products {
+		// Row number
+		content.WriteString(fmt.Sprintf("%-4d ", i+1))
+		
+		// Style based on even/odd row
+		var rowStyleToUse lipgloss.Style
+		if i%2 == 0 {
+			rowStyleToUse = rowStyle
+		} else {
+			rowStyleToUse = cellStyle
+		}
+		
+		// Format each cell
+		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*d ", colWidths[0], product.ID)))
+		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*s ", colWidths[1], product.Name)))
+		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("$%-*.2f ", colWidths[2]-1, product.Price)))
+		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*s ", colWidths[3], product.Category)))
+		
+		content.WriteString("\n")
 	}
 	
 	return content.String()
@@ -484,22 +569,50 @@ func (m model) renderProductsTable() string {
 func (m model) renderCategoriesTable() string {
 	var content strings.Builder
 	
-	// Table header
-	headerStyle := lipgloss.NewStyle().Bold(true).Underline(true).Foreground(lipgloss.Color("#00FFFF"))
+	// Define column widths for consistent alignment
+	colWidths := []int{5, 25, 25}
 	
-	// Format the header
-	header := fmt.Sprintf("%-5s %-20s %-20s\n", "ID", "NAME", "SLUG")
-	content.WriteString(headerStyle.Render(header))
+	// Define table styles
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Background(lipgloss.Color("#222222")).
+		Foreground(lipgloss.Color("#FFFFFF"))
+	
+	cellStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF"))
+	
+	rowStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#CCCCCC"))
+	
+	// Add row numbers column at the beginning
+	content.WriteString(fmt.Sprintf("%-4s ", "#"))
+	
+	// Format the headers
+	headers := []string{"ID", "NAME", "SLUG"}
+	for i, header := range headers {
+		content.WriteString(headerStyle.Render(fmt.Sprintf("%-*s ", colWidths[i], header)))
+	}
 	content.WriteString("\n")
 	
-	// Table rows
-	for _, category := range m.categories {
-		row := fmt.Sprintf("%-5d %-20s %-20s", 
-			category.ID, 
-			category.Name, 
-			category.Slug)
-			
-		content.WriteString(row + "\n")
+	// Table rows with alternating styles
+	for i, category := range m.categories {
+		// Row number
+		content.WriteString(fmt.Sprintf("%-4d ", i+1))
+		
+		// Style based on even/odd row
+		var rowStyleToUse lipgloss.Style
+		if i%2 == 0 {
+			rowStyleToUse = rowStyle
+		} else {
+			rowStyleToUse = cellStyle
+		}
+		
+		// Format each cell
+		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*d ", colWidths[0], category.ID)))
+		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*s ", colWidths[1], category.Name)))
+		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*s ", colWidths[2], category.Slug)))
+		
+		content.WriteString("\n")
 	}
 	
 	return content.String()
