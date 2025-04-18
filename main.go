@@ -232,8 +232,6 @@ func fetchTableData(db *sql.DB, tableName string, limit int) ([]RowData, error) 
 	query := fmt.Sprintf("SELECT %s FROM `%s` LIMIT %d", 
 		strings.Join(columnNames, ", "), tableName, limit)
 	
-	fmt.Printf("Running query: %s\n", query)
-	
 	rows, err := db.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("error fetching data: %v", err)
