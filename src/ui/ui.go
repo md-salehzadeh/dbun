@@ -589,8 +589,11 @@ func RenderTable(styles Styles, mainBoxWidth int,
 	// Render header row
 	headerCells := make([]string, len(headers))
 	for i, header := range headers {
-		truncatedHeader := model.TruncateWithEllipsis(header, colWidths[i])
-		headerCells[i] = styles.HeaderStyle.Copy().Width(colWidths[i]).Render(truncatedHeader)
+		// We still need to maintain the width for visual alignment with data cells,
+		// but we'll ensure the header text is not truncated by showing the full text
+		// and letting it overflow within its cell
+		maxWidth := max(len(header)+2, colWidths[i]) // +2 for padding
+		headerCells[i] = styles.HeaderStyle.Copy().Width(maxWidth).Render(header)
 	}
 
 	// Add row number header
@@ -707,7 +710,7 @@ func RenderTableData(styles Styles, mainBoxWidth int,
 	// Create headers from metadata
 	headers := make([]string, len(metadata))
 	for i, col := range metadata {
-		headers[i] = strings.ToUpper(col.Name)
+		headers[i] = col.Name
 	}
 
 	// Define minimum and ideal column widths
