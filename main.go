@@ -9,6 +9,34 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Sample data structures for tables
+type User struct {
+	ID       int
+	Username string
+	Email    string
+	Active   bool
+}
+
+type Order struct {
+	ID         int
+	UserID     int
+	TotalPrice float64
+	Status     string
+}
+
+type Product struct {
+	ID       int
+	Name     string
+	Price    float64
+	Category string
+}
+
+type Category struct {
+	ID   int
+	Name string
+	Slug string
+}
+
 type model struct {
 	tables         []string // List of tables
 	selectedIdx    int      // Currently selected table index
@@ -17,6 +45,49 @@ type model struct {
 	width          int      // Terminal width
 	height         int      // Terminal height
 	focusLeft      bool     // Focus on left (true) or right (false) box
+	
+	// Sample data for each table
+	users      []User
+	orders     []Order
+	products   []Product
+	categories []Category
+}
+
+// Initialize sample data for tables
+func initSampleData() ([]User, []Order, []Product, []Category) {
+	users := []User{
+		{ID: 1, Username: "johndoe", Email: "john@example.com", Active: true},
+		{ID: 2, Username: "janedoe", Email: "jane@example.com", Active: true},
+		{ID: 3, Username: "bobsmith", Email: "bob@example.com", Active: false},
+		{ID: 4, Username: "alicejones", Email: "alice@example.com", Active: true},
+		{ID: 5, Username: "mikebrown", Email: "mike@example.com", Active: true},
+	}
+
+	orders := []Order{
+		{ID: 101, UserID: 1, TotalPrice: 125.99, Status: "Completed"},
+		{ID: 102, UserID: 2, TotalPrice: 89.50, Status: "Processing"},
+		{ID: 103, UserID: 1, TotalPrice: 45.75, Status: "Shipped"},
+		{ID: 104, UserID: 3, TotalPrice: 210.25, Status: "Pending"},
+		{ID: 105, UserID: 4, TotalPrice: 55.00, Status: "Completed"},
+	}
+
+	products := []Product{
+		{ID: 201, Name: "Laptop", Price: 999.99, Category: "Electronics"},
+		{ID: 202, Name: "Headphones", Price: 129.99, Category: "Electronics"},
+		{ID: 203, Name: "Coffee Maker", Price: 79.50, Category: "Appliances"},
+		{ID: 204, Name: "Running Shoes", Price: 89.95, Category: "Footwear"},
+		{ID: 205, Name: "Desk Chair", Price: 199.99, Category: "Furniture"},
+	}
+
+	categories := []Category{
+		{ID: 301, Name: "Electronics", Slug: "electronics"},
+		{ID: 302, Name: "Appliances", Slug: "appliances"},
+		{ID: 303, Name: "Footwear", Slug: "footwear"},
+		{ID: 304, Name: "Furniture", Slug: "furniture"},
+		{ID: 305, Name: "Books", Slug: "books"},
+	}
+
+	return users, orders, products, categories
 }
 
 func (m model) Init() tea.Cmd {
@@ -228,8 +299,56 @@ func (m model) View() string {
 
 	sidebarView := sidebarStyle.Render(sidebar.String())
 
-	// Main Box: Show selected table data based on mode
-	mainContent := fmt.Sprintf("Showing %s for: %s", m.mode, m.tables[m.activeTableIdx])
+	// Main Box: Show selected table data based on mode and selected table
+	var mainContent string
+	activeTable := m.tables[m.activeTableIdx]
+	
+	if m.mode == "Data" {
+		// Display table data based on the selected table
+		switch activeTable {
+		case "users":
+			mainContent = m.renderUsersTable()
+		case "orders":
+			mainContent = m.renderOrdersTable()
+		case "products":
+			mainContent = m.renderProductsTable()
+		case "categories":
+			mainContent = m.renderCategoriesTable()
+		default:
+			mainContent = "Unknown table selected"
+		}
+	} else if m.mode == "Structure" {
+		// Display table structure based on the selected table
+		switch activeTable {
+		case "users":
+			mainContent = "User Structure:\n\nID: int\nUsername: string\nEmail: string\nActive: bool"
+		case "orders":
+			mainContent = "Order Structure:\n\nID: int\nUserID: int\nTotalPrice: float64\nStatus: string"
+		case "products":
+			mainContent = "Product Structure:\n\nID: int\nName: string\nPrice: float64\nCategory: string"
+		case "categories":
+			mainContent = "Category Structure:\n\nID: int\nName: string\nSlug: string"
+		default:
+			mainContent = "Unknown table selected"
+		}
+	} else if m.mode == "Indices" {
+		// Display indices information based on the selected table
+		switch activeTable {
+		case "users":
+			mainContent = "User Indices:\n\nPrimary Key: ID\nIndex: Username (unique)\nIndex: Email (unique)"
+		case "orders":
+			mainContent = "Order Indices:\n\nPrimary Key: ID\nIndex: UserID"
+		case "products":
+			mainContent = "Product Indices:\n\nPrimary Key: ID\nIndex: Category"
+		case "categories":
+			mainContent = "Category Indices:\n\nPrimary Key: ID\nIndex: Slug (unique)"
+		default:
+			mainContent = "Unknown table selected"
+		}
+	} else {
+		mainContent = fmt.Sprintf("Unknown mode: %s", m.mode)
+	}
+	
 	mainBoxView := mainBoxStyle.Render(mainContent)
 
 	// Top Buttons for switching views - styled as tabs
@@ -281,7 +400,113 @@ func (m model) View() string {
 	return doc.String()
 }
 
+// Helper methods to render table data
+func (m model) renderUsersTable() string {
+	var content strings.Builder
+	
+	// Table header
+	headerStyle := lipgloss.NewStyle().Bold(true).Underline(true).Foreground(lipgloss.Color("#00FFFF"))
+	
+	// Format the header
+	header := fmt.Sprintf("%-5s %-15s %-25s %-10s\n", "ID", "USERNAME", "EMAIL", "ACTIVE")
+	content.WriteString(headerStyle.Render(header))
+	content.WriteString("\n")
+	
+	// Table rows
+	for _, user := range m.users {
+		activeStr := "No"
+		if user.Active {
+			activeStr = "Yes"
+		}
+		
+		row := fmt.Sprintf("%-5d %-15s %-25s %-10s", 
+			user.ID, 
+			user.Username, 
+			user.Email, 
+			activeStr)
+			
+		content.WriteString(row + "\n")
+	}
+	
+	return content.String()
+}
+
+func (m model) renderOrdersTable() string {
+	var content strings.Builder
+	
+	// Table header
+	headerStyle := lipgloss.NewStyle().Bold(true).Underline(true).Foreground(lipgloss.Color("#00FFFF"))
+	
+	// Format the header
+	header := fmt.Sprintf("%-5s %-10s %-15s %-15s\n", "ID", "USER ID", "TOTAL PRICE", "STATUS")
+	content.WriteString(headerStyle.Render(header))
+	content.WriteString("\n")
+	
+	// Table rows
+	for _, order := range m.orders {
+		row := fmt.Sprintf("%-5d %-10d $%-14.2f %-15s", 
+			order.ID, 
+			order.UserID, 
+			order.TotalPrice, 
+			order.Status)
+			
+		content.WriteString(row + "\n")
+	}
+	
+	return content.String()
+}
+
+func (m model) renderProductsTable() string {
+	var content strings.Builder
+	
+	// Table header
+	headerStyle := lipgloss.NewStyle().Bold(true).Underline(true).Foreground(lipgloss.Color("#00FFFF"))
+	
+	// Format the header
+	header := fmt.Sprintf("%-5s %-20s %-15s %-20s\n", "ID", "NAME", "PRICE", "CATEGORY")
+	content.WriteString(headerStyle.Render(header))
+	content.WriteString("\n")
+	
+	// Table rows
+	for _, product := range m.products {
+		row := fmt.Sprintf("%-5d %-20s $%-14.2f %-20s", 
+			product.ID, 
+			product.Name, 
+			product.Price, 
+			product.Category)
+			
+		content.WriteString(row + "\n")
+	}
+	
+	return content.String()
+}
+
+func (m model) renderCategoriesTable() string {
+	var content strings.Builder
+	
+	// Table header
+	headerStyle := lipgloss.NewStyle().Bold(true).Underline(true).Foreground(lipgloss.Color("#00FFFF"))
+	
+	// Format the header
+	header := fmt.Sprintf("%-5s %-20s %-20s\n", "ID", "NAME", "SLUG")
+	content.WriteString(headerStyle.Render(header))
+	content.WriteString("\n")
+	
+	// Table rows
+	for _, category := range m.categories {
+		row := fmt.Sprintf("%-5d %-20s %-20s", 
+			category.ID, 
+			category.Name, 
+			category.Slug)
+			
+		content.WriteString(row + "\n")
+	}
+	
+	return content.String()
+}
+
 func main() {
+	users, orders, products, categories := initSampleData()
 	m := model{
 		tables:         []string{"users", "orders", "products", "categories"},
 		selectedIdx:    0,
@@ -290,6 +515,10 @@ func main() {
 		width:          80,     // Default width
 		height:         24,     // Default height
 		focusLeft:      true,   // Start with focus on left box
+		users:          users,
+		orders:         orders,
+		products:       products,
+		categories:     categories,
 	}
 
 	p := tea.NewProgram(&m, tea.WithAltScreen()) // Fullscreen app
