@@ -24,19 +24,19 @@ type Styles struct {
 	MainBoxStyle lipgloss.Style
 
 	// Tab styles
-	TabStyle            lipgloss.Style
-	DataTabStyle        lipgloss.Style
-	StructureTabStyle   lipgloss.Style
-	IndicesTabStyle     lipgloss.Style
+	TabStyle          lipgloss.Style
+	DataTabStyle      lipgloss.Style
+	StructureTabStyle lipgloss.Style
+	IndicesTabStyle   lipgloss.Style
 
 	// Table styles
-	HeaderStyle        lipgloss.Style
-	CellStyle          lipgloss.Style
-	AltRowStyle        lipgloss.Style
-	SelectedCellStyle  lipgloss.Style
-	EditingCellStyle   lipgloss.Style
-	RowNumStyle        lipgloss.Style
-	TableBorders       lipgloss.Border
+	HeaderStyle       lipgloss.Style
+	CellStyle         lipgloss.Style
+	AltRowStyle       lipgloss.Style
+	SelectedCellStyle lipgloss.Style
+	EditingCellStyle  lipgloss.Style
+	RowNumStyle       lipgloss.Style
+	TableBorders      lipgloss.Border
 
 	// Status bar styles
 	StatusBarStyle  lipgloss.Style
@@ -230,9 +230,11 @@ func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx
 	// Calculate inner height available for list items
 	// Overhead: TopBorder(1), BottomBorder(1), Title(1), Blank after Title(1), TopScrollIndicator(1/0), BottomScrollIndicator(1/0), Pagination(1/0), Blank before Pagination(1/0)
 	boxInnerHeight := styles.SidebarStyle.GetHeight() - 2 // Account for top/bottom border
-	if boxInnerHeight < 0 { boxInnerHeight = 0 }
+	if boxInnerHeight < 0 {
+		boxInnerHeight = 0
+	}
 
-	titleHeight := 2 // Title line + blank line after
+	titleHeight := 2           // Title line + blank line after
 	scrollIndicatorHeight := 1 // Each indicator takes 1 line
 
 	// Calculate maxVisibleItems based on available space
@@ -245,7 +247,9 @@ func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx
 	estimatedFooterHeight := 0
 	// Temporarily calculate max items without footer to see if footer is needed
 	tempMaxItems := availableHeight
-	if tempMaxItems < 0 { tempMaxItems = 0 }
+	if tempMaxItems < 0 {
+		tempMaxItems = 0
+	}
 	tempEndIdx := scrollPosition + tempMaxItems
 	if tempEndIdx < len(tables) {
 		estimatedFooterHeight += scrollIndicatorHeight // "↓ More"
@@ -259,8 +263,9 @@ func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx
 	availableHeight -= estimatedFooterHeight
 
 	maxVisibleItems := availableHeight
-	if maxVisibleItems < 0 { maxVisibleItems = 0 } // Cannot be negative
-
+	if maxVisibleItems < 0 {
+		maxVisibleItems = 0
+	} // Cannot be negative
 
 	// Calculate which portion of the list to show
 	endIdx := scrollPosition + maxVisibleItems
@@ -268,10 +273,15 @@ func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx
 		endIdx = len(tables)
 	}
 	// Ensure start index is valid
-	if scrollPosition < 0 { scrollPosition = 0 }
-	if scrollPosition > len(tables) { scrollPosition = len(tables) } // Can be empty if scrolled past end
-	if endIdx < scrollPosition { endIdx = scrollPosition } // Ensure end is not before start
-
+	if scrollPosition < 0 {
+		scrollPosition = 0
+	}
+	if scrollPosition > len(tables) {
+		scrollPosition = len(tables)
+	} // Can be empty if scrolled past end
+	if endIdx < scrollPosition {
+		endIdx = scrollPosition
+	} // Ensure end is not before start
 
 	// Prepare content with proper spacing and alignment
 	var content strings.Builder
@@ -281,7 +291,7 @@ func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FFFFFF")).
-		Background(lipgloss.Color("#6A0DAD")). // Purple color for title
+		Background(lipgloss.Color("#6A0DAD")).     // Purple color for title
 		Width(styles.SidebarStyle.GetWidth() - 4). // Account for border padding
 		Align(lipgloss.Center)
 
@@ -309,7 +319,9 @@ func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx
 
 		// Determine style based on selection and active state
 		itemStyleWidth := styles.SidebarStyle.GetWidth() - 6 // Account for border, padding, and cursor
-		if itemStyleWidth < 1 { itemStyleWidth = 1 }
+		if itemStyleWidth < 1 {
+			itemStyleWidth = 1
+		}
 
 		if selectedIdx == i && activeTableIdx == i {
 			cursor = "●" // Active and selected
@@ -330,7 +342,9 @@ func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx
 		// Truncate based on the style's width calculation
 		// Subtract cursor width (1) and space (1)
 		maxTextWidth := itemStyleWidth - 2
-		if maxTextWidth < 0 { maxTextWidth = 0 }
+		if maxTextWidth < 0 {
+			maxTextWidth = 0
+		}
 		truncatedTableName := model.TruncateWithEllipsis(tableName, maxTextWidth)
 
 		// Render the line
@@ -382,7 +396,9 @@ func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx
 	// --- Combine and Pad ---
 	// Calculate remaining space to fill
 	remainingHeight := boxInnerHeight - currentContentHeight - footerHeight
-	if remainingHeight < 0 { remainingHeight = 0 }
+	if remainingHeight < 0 {
+		remainingHeight = 0
+	}
 
 	// Add blank lines between items and footer
 	content.WriteString(strings.Repeat("\n", remainingHeight))
@@ -398,7 +414,6 @@ func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx
 	if len(finalLines) > boxInnerHeight {
 		finalContentStr = strings.Join(finalLines[:boxInnerHeight], "\n")
 	}
-
 
 	return styles.SidebarStyle.Render(finalContentStr)
 }
@@ -427,26 +442,26 @@ func RenderStatusBar(styles Styles, width int) string {
 // CalculateDynamicWidths calculates appropriate column widths based on content and available space
 func CalculateDynamicWidths(availableWidth, numColumns int, minWidths, idealWidths []int) []int {
 	result := make([]int, numColumns)
-	
+
 	// Calculate total space needed for borders and padding
-	tableBorderOverhead := 3 // Left, right border and one extra spacer
+	tableBorderOverhead := 3              // Left, right border and one extra spacer
 	cellPaddingOverhead := 3 * numColumns // Each cell needs padding and separator
-	rowNumberColumn := 7 // Width for row numbers column with padding and separator
-	
+	rowNumberColumn := 7                  // Width for row numbers column with padding and separator
+
 	totalOverhead := tableBorderOverhead + cellPaddingOverhead + rowNumberColumn
-	
+
 	usableWidth := availableWidth - totalOverhead
 	if usableWidth < 0 {
 		usableWidth = 0
 	}
-	
+
 	// Start with minimum widths
 	totalMinWidth := 0
 	for i, minWidth := range minWidths {
 		result[i] = minWidth
 		totalMinWidth += minWidth
 	}
-	
+
 	// If we have extra space, distribute proportionally based on ideal widths
 	if totalMinWidth < usableWidth {
 		// Calculate total ideal width
@@ -454,25 +469,25 @@ func CalculateDynamicWidths(availableWidth, numColumns int, minWidths, idealWidt
 		for _, idealWidth := range idealWidths {
 			totalIdealWidth += idealWidth
 		}
-		
+
 		extraSpace := usableWidth - totalMinWidth
 		spaceUsed := 0
-		
+
 		// Distribute extra space proportionally
 		for i := 0; i < numColumns; i++ {
 			// Calculate proportion of extra space for this column
 			proportion := float64(idealWidths[i]) / float64(totalIdealWidth)
 			extraForColumn := int(float64(extraSpace) * proportion)
-			
+
 			// Don't exceed ideal width
 			if result[i]+extraForColumn > idealWidths[i] {
 				extraForColumn = idealWidths[i] - result[i]
 			}
-			
+
 			result[i] += extraForColumn
 			spaceUsed += extraForColumn
 		}
-		
+
 		// If we have any remaining space due to rounding, give it to the last column
 		if spaceUsed < extraSpace && numColumns > 0 {
 			result[numColumns-1] += (extraSpace - spaceUsed)
@@ -483,18 +498,18 @@ func CalculateDynamicWidths(availableWidth, numColumns int, minWidths, idealWidt
 		for _, idealWidth := range idealWidths {
 			totalIdealWidth += idealWidth
 		}
-		
+
 		// Calculate how much we need to reduce by
 		reduction := totalMinWidth - usableWidth
-		
+
 		// Ensure each column has at least a minimum width (3 chars)
 		absoluteMinWidth := 3
-		
+
 		// Reduce proportionally
 		for i := 0; i < numColumns; i++ {
 			proportion := float64(idealWidths[i]) / float64(totalIdealWidth)
 			reduceBy := int(float64(reduction) * proportion)
-			
+
 			// Ensure we don't go below absolute minimum
 			if result[i]-reduceBy < absoluteMinWidth {
 				reduceBy = result[i] - absoluteMinWidth
@@ -502,61 +517,61 @@ func CalculateDynamicWidths(availableWidth, numColumns int, minWidths, idealWidt
 					reduceBy = 0
 				}
 			}
-			
+
 			result[i] -= reduceBy
 		}
 	}
-	
+
 	return result
 }
 
 // RenderTable renders a data table with headers and rows
-func RenderTable(styles Styles, mainBoxWidth int, 
-                headers []string, rows [][]string, 
-                minColWidths, idealColWidths []int,
-                cursorRow, cursorCol int, 
-                focusLeft, editing bool,
-                editBuffer string,
-                scrollPosition int) string { // Added scrollPosition parameter
-	
+func RenderTable(styles Styles, mainBoxWidth int,
+	headers []string, rows [][]string,
+	minColWidths, idealColWidths []int,
+	cursorRow, cursorCol int,
+	focusLeft, editing bool,
+	editBuffer string,
+	scrollPosition int) string { // Added scrollPosition parameter
+
 	var sb strings.Builder
-	
+
 	// Calculate dynamic column widths
 	numColumns := len(headers)
 	colWidths := CalculateDynamicWidths(mainBoxWidth, numColumns, minColWidths, idealColWidths)
-	
+
 	// Render header row
 	headerCells := make([]string, len(headers))
 	for i, header := range headers {
 		truncatedHeader := model.TruncateWithEllipsis(header, colWidths[i])
 		headerCells[i] = styles.HeaderStyle.Copy().Width(colWidths[i]).Render(truncatedHeader)
 	}
-	
+
 	// Add row number header
 	rowNumHeader := styles.HeaderStyle.Copy().Width(4).Render("#")
 	headerRow := lipgloss.JoinHorizontal(lipgloss.Top, rowNumHeader, lipgloss.JoinHorizontal(lipgloss.Top, headerCells...))
-	
+
 	// Render data rows
 	dataRows := make([]string, len(rows))
 	for i, row := range rows {
 		cells := make([]string, len(row))
-		
+
 		// Choose style based on row (alternating)
 		rowStyle := styles.CellStyle
 		// Use absolute row index for alternating style
-		absoluteRowIndex := scrollPosition + i 
-		if absoluteRowIndex%2 == 1 { 
+		absoluteRowIndex := scrollPosition + i
+		if absoluteRowIndex%2 == 1 {
 			rowStyle = styles.AltRowStyle
 		}
-		
+
 		// Format each cell
 		for j, cell := range row {
 			cellContent := model.TruncateWithEllipsis(cell, colWidths[j])
-			
+
 			// Apply appropriate style based on selection/editing state
 			styleToUse := rowStyle
 			// Compare with relative cursorRow (adjustedCursorRow passed to this function)
-			if !focusLeft && cursorRow == i && cursorCol == j { 
+			if !focusLeft && cursorRow == i && cursorCol == j {
 				if editing {
 					// Show edit buffer when editing
 					editText := model.TruncateWithEllipsis(editBuffer, colWidths[j])
@@ -568,17 +583,17 @@ func RenderTable(styles Styles, mainBoxWidth int,
 			}
 			cells[j] = styleToUse.Copy().Width(colWidths[j]).Render(cellContent)
 		}
-		
+
 		// Add row number with consistent width, using absolute row index
-		rowNum := styles.RowNumStyle.Copy().Width(4).Render(fmt.Sprintf("%d", absoluteRowIndex+1)) 
+		rowNum := styles.RowNumStyle.Copy().Width(4).Render(fmt.Sprintf("%d", absoluteRowIndex+1))
 		dataRows[i] = lipgloss.JoinHorizontal(lipgloss.Top, rowNum, lipgloss.JoinHorizontal(lipgloss.Top, cells...))
 	}
-	
+
 	// Join all rows with table borders
 	tableStyle := lipgloss.NewStyle().
 		BorderStyle(styles.TableBorders).
 		BorderForeground(lipgloss.Color("#555555"))
-	
+
 	// Add the table content
 	if len(dataRows) > 0 {
 		tableContent := lipgloss.JoinVertical(lipgloss.Left, append([]string{headerRow}, dataRows...)...)
@@ -591,23 +606,25 @@ func RenderTable(styles Styles, mainBoxWidth int,
 		sb.WriteString(table)
 		sb.WriteString("\nNo data to display")
 	}
-	
+
 	return sb.String()
 }
 
 // RenderTableData formats table data into a displayable format with scrolling
 func RenderTableData(styles Styles, mainBoxWidth int,
-                     tableName string,
-                     metadata []model.ColumnMetadata,
-                     data []model.RowData,
-                     cursorRow, cursorCol int,
-                     focusLeft, editing bool,
-                     editBuffer string,
-                     scrollPosition int) string {
+	tableName string,
+	metadata []model.ColumnMetadata,
+	data []model.RowData,
+	cursorRow, cursorCol int,
+	focusLeft, editing bool,
+	editBuffer string,
+	scrollPosition int) string {
 
 	// Calculate inner height available for rows
 	boxInnerHeight := styles.MainBoxStyle.GetHeight() - 2 // Subtract top/bottom border of MainBoxStyle
-	if boxInnerHeight < 0 { boxInnerHeight = 0 }
+	if boxInnerHeight < 0 {
+		boxInnerHeight = 0
+	}
 	// Overhead: Title(1), Blank(2), TableHeader(1), TableBorders(2), Blank(1), ScrollInfo(1) = 8 lines
 	fixedOverhead := 8
 	maxVisibleRows := boxInnerHeight - fixedOverhead
@@ -635,7 +652,9 @@ func RenderTableData(styles Styles, mainBoxWidth int,
 		currentContentHeight += 1 // For the message line
 
 		blanksNeeded := boxInnerHeight - currentContentHeight
-		if blanksNeeded < 0 { blanksNeeded = 0 }
+		if blanksNeeded < 0 {
+			blanksNeeded = 0
+		}
 		return titleContent + messageContent + strings.Repeat("\n", blanksNeeded)
 	}
 
@@ -654,18 +673,25 @@ func RenderTableData(styles Styles, mainBoxWidth int,
 
 		// Ideal width logic (simplified)
 		idealColWidths[i] = 15 // Default
-		if strings.Contains(col.Type, "int") { idealColWidths[i] = 8 }
-		if strings.Contains(col.Type, "float") || strings.Contains(col.Type, "double") || strings.Contains(col.Type, "decimal") { idealColWidths[i] = 12 }
-		if strings.Contains(col.Type, "varchar") { idealColWidths[i] = 25 } // Adjust as needed
-		if strings.Contains(col.Type, "text") { idealColWidths[i] = 30 }
+		if strings.Contains(col.Type, "int") {
+			idealColWidths[i] = 8
+		}
+		if strings.Contains(col.Type, "float") || strings.Contains(col.Type, "double") || strings.Contains(col.Type, "decimal") {
+			idealColWidths[i] = 12
+		}
+		if strings.Contains(col.Type, "varchar") {
+			idealColWidths[i] = 25
+		} // Adjust as needed
+		if strings.Contains(col.Type, "text") {
+			idealColWidths[i] = 30
+		}
 		idealColWidths[i] = max(minColWidths[i], idealColWidths[i]) // Ideal >= Min
 	}
-
 
 	if len(data) == 0 {
 		// Render empty table (just header) + "No data" message
 		emptyRows := [][]string{}
-		tableContent := RenderTable(styles, mainBoxWidth - 4, headers, emptyRows,
+		tableContent := RenderTable(styles, mainBoxWidth-4, headers, emptyRows,
 			minColWidths, idealColWidths,
 			-1, -1, focusLeft, false, "",
 			0, // Pass 0 for scrollPosition when no data
@@ -678,15 +704,18 @@ func RenderTableData(styles Styles, mainBoxWidth int,
 		currentContentHeight += tableSectionHeight
 
 		blanksNeeded := boxInnerHeight - currentContentHeight
-		if blanksNeeded < 0 { blanksNeeded = 0 }
+		if blanksNeeded < 0 {
+			blanksNeeded = 0
+		}
 
 		return titleContent + tableContent + "\n" + noDataMessage + strings.Repeat("\n", blanksNeeded)
 	}
 
-
 	// --- Apply Scrolling ---
 	visibleData := data
-	if scrollPosition < 0 { scrollPosition = 0 } // Ensure scroll is not negative
+	if scrollPosition < 0 {
+		scrollPosition = 0
+	} // Ensure scroll is not negative
 
 	endPos := scrollPosition + maxVisibleRows
 	if endPos > len(data) {
@@ -700,11 +729,12 @@ func RenderTableData(styles Styles, mainBoxWidth int,
 	}
 
 	// Ensure end is after start
-	if endPos < scrollPosition { endPos = scrollPosition }
+	if endPos < scrollPosition {
+		endPos = scrollPosition
+	}
 
 	visibleData = data[scrollPosition:endPos]
 	numVisibleRows := len(visibleData)
-
 
 	// --- Prepare Data Rows ---
 	rows := make([][]string, numVisibleRows)
@@ -726,9 +756,8 @@ func RenderTableData(styles Styles, mainBoxWidth int,
 		adjustedCursorRow = -1 // Cursor is not visible
 	}
 
-
 	// --- Render Table ---
-	tableContent := RenderTable(styles, mainBoxWidth - 4, headers, rows,
+	tableContent := RenderTable(styles, mainBoxWidth-4, headers, rows,
 		minColWidths, idealColWidths,
 		adjustedCursorRow, cursorCol,
 		focusLeft, editing, editBuffer,
@@ -737,7 +766,6 @@ func RenderTableData(styles Styles, mainBoxWidth int,
 	// Table height: Header(1) + Rows(numVisibleRows) + Borders(2) = numVisibleRows + 3
 	tableHeight := numVisibleRows + 3
 	currentContentHeight += tableHeight
-
 
 	// --- Footer / Scroll Info ---
 	var footerBuilder strings.Builder
@@ -755,8 +783,12 @@ func RenderTableData(styles Styles, mainBoxWidth int,
 	showScrollInfo := totalRows > maxVisibleRows || scrollPosition > 0
 	if showScrollInfo {
 		var indicators []string
-		if scrollPosition > 0 { indicators = append(indicators, "↑ Prev") }
-		if currentEnd < totalRows { indicators = append(indicators, "↓ More") }
+		if scrollPosition > 0 {
+			indicators = append(indicators, "↑ Prev")
+		}
+		if currentEnd < totalRows {
+			indicators = append(indicators, "↓ More")
+		}
 
 		paginationInfo := fmt.Sprintf("Rows %d-%d of %d", currentStart, currentEnd, totalRows)
 
@@ -771,7 +803,6 @@ func RenderTableData(styles Styles, mainBoxWidth int,
 		footerHeight = 1
 	}
 	currentContentHeight += footerHeight // Account for the line after table (either scroll info or blank)
-
 
 	// --- Combine and Pad ---
 	var finalContent strings.Builder
@@ -801,10 +832,10 @@ func RenderTableStructure(tableName string, metadata []model.ColumnMetadata, scr
 	if len(metadata) == 0 {
 		return fmt.Sprintf("No metadata available for table: %s", tableName)
 	}
-	
+
 	// Prepare content
 	var sb strings.Builder
-	
+
 	// Add title with consistent styling
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -812,66 +843,66 @@ func RenderTableStructure(tableName string, metadata []model.ColumnMetadata, scr
 		Background(lipgloss.Color("#1E90FF")).
 		Padding(0, 1).
 		Align(lipgloss.Center)
-		
+
 	sb.WriteString(titleStyle.Render(tableName))
 	sb.WriteString("\n\n")
-	
+
 	// Style for column names
 	colNameStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#AACCFF"))
-		
+
 	// Style for types
 	typeStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#FFFFFF"))
-		
+
 	// Style for constraints
 	constraintStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#FFCCAA"))
-		
+
 	// Style for keys
 	keyStyle := lipgloss.NewStyle().
 		Italic(true).
 		Foreground(lipgloss.Color("#AAFFAA"))
-	
+
 	// Calculate visible rows based on reasonable estimate
 	visibleMetadata := metadata
 	maxVisibleRows := 20 // Approximate - could refine based on box height
-	
+
 	if scrollPosition >= 0 && len(metadata) > maxVisibleRows {
 		endPos := scrollPosition + maxVisibleRows
 		if endPos > len(metadata) {
 			endPos = len(metadata)
 		}
-		
+
 		if scrollPosition < len(metadata) {
 			visibleMetadata = metadata[scrollPosition:endPos]
 		} else {
 			visibleMetadata = []model.ColumnMetadata{}
 		}
 	}
-	
+
 	// Add scroll indicators with consistent styling
 	if scrollPosition > 0 {
 		indicatorStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#AAAAAA")).
 			Align(lipgloss.Center)
-			
+
 		sb.WriteString(indicatorStyle.Render("↑ Previous columns"))
 		sb.WriteString("\n\n")
 	}
-	
+
 	// Structure table header
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FFFFFF")).
 		Background(lipgloss.Color("#333366"))
-		
+
 	sb.WriteString(headerStyle.Render(" Column Name       Type                    Constraints     Key "))
 	sb.WriteString("\n")
 	sb.WriteString(headerStyle.Render("─────────────────────────────────────────────────────────────"))
 	sb.WriteString("\n")
-	
+
 	// Show the column details
 	for i, col := range visibleMetadata {
 		// Background color for alternating rows
@@ -879,53 +910,53 @@ func RenderTableStructure(tableName string, metadata []model.ColumnMetadata, scr
 		if i%2 == 1 {
 			rowStyle = rowStyle.Background(lipgloss.Color("#222233"))
 		}
-		
+
 		nullableStr := "NOT NULL"
 		if col.Nullable {
 			nullableStr = "NULL"
 		}
-		
+
 		keyStr := col.Key
 		if keyStr == "" {
 			keyStr = "-"
 		}
-		
+
 		// Format each field with padding to align columns
 		colNameText := rowStyle.Render(" " + colNameStyle.Render(model.TruncateWithEllipsis(col.Name, 16)))
 		typeText := rowStyle.Render(" " + typeStyle.Render(model.TruncateWithEllipsis(col.Type, 22)))
 		nullText := rowStyle.Render(" " + constraintStyle.Render(model.TruncateWithEllipsis(nullableStr, 14)))
 		keyText := rowStyle.Render(" " + keyStyle.Render(model.TruncateWithEllipsis(keyStr, 3)) + " ")
-		
+
 		sb.WriteString(colNameText + typeText + nullText + keyText)
 		sb.WriteString("\n")
 	}
-	
+
 	// Add more indicator and pagination info
-	if scrollPosition + len(visibleMetadata) < len(metadata) {
+	if scrollPosition+len(visibleMetadata) < len(metadata) {
 		indicatorStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#AAAAAA")).
 			Align(lipgloss.Center)
-			
+
 		sb.WriteString("\n")
 		sb.WriteString(indicatorStyle.Render("↓ More columns"))
 	}
-	
+
 	// Add scroll position indicator with nice styling
 	if len(metadata) > maxVisibleRows {
 		paginationStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#999999")).
 			Align(lipgloss.Right).
 			PaddingTop(1)
-			
-		paginationText := fmt.Sprintf("Columns %d-%d of %d", 
-			scrollPosition+1, 
-			scrollPosition+len(visibleMetadata), 
+
+		paginationText := fmt.Sprintf("Columns %d-%d of %d",
+			scrollPosition+1,
+			scrollPosition+len(visibleMetadata),
 			len(metadata))
-			
+
 		sb.WriteString("\n")
 		sb.WriteString(paginationStyle.Render(paginationText))
 	}
-	
+
 	return sb.String()
 }
 
@@ -934,10 +965,10 @@ func RenderTableIndices(tableName string, indices []string, scrollPosition int) 
 	if len(indices) == 0 {
 		return fmt.Sprintf("No index information available for table: %s", tableName)
 	}
-	
+
 	// Prepare content
 	var sb strings.Builder
-	
+
 	// Add title with consistent styling
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -945,57 +976,57 @@ func RenderTableIndices(tableName string, indices []string, scrollPosition int) 
 		Background(lipgloss.Color("#1E90FF")).
 		Padding(0, 1).
 		Align(lipgloss.Center)
-		
+
 	sb.WriteString(titleStyle.Render(tableName))
 	sb.WriteString("\n\n")
-	
+
 	// Calculate visible indices
 	visibleIndices := indices
 	maxVisibleRows := 20 // Approximate - could refine based on box height
-	
+
 	if scrollPosition >= 0 && len(indices) > maxVisibleRows {
 		endPos := scrollPosition + maxVisibleRows
 		if endPos > len(indices) {
 			endPos = len(indices)
 		}
-		
+
 		if scrollPosition < len(indices) {
 			visibleIndices = indices[scrollPosition:endPos]
 		} else {
 			visibleIndices = []string{}
 		}
 	}
-	
+
 	// Add scroll indicators with consistent styling
 	if scrollPosition > 0 {
 		indicatorStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#AAAAAA")).
 			Align(lipgloss.Center)
-			
+
 		sb.WriteString(indicatorStyle.Render("↑ Previous indices"))
 		sb.WriteString("\n\n")
 	}
-	
+
 	// Table header
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FFFFFF")).
 		Background(lipgloss.Color("#333366"))
-		
+
 	sb.WriteString(headerStyle.Render(" Index Name                       Type        Columns                   "))
 	sb.WriteString("\n")
 	sb.WriteString(headerStyle.Render("─────────────────────────────────────────────────────────────────────"))
 	sb.WriteString("\n")
-	
+
 	// Index type and name styling
 	indexNameStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#AACCFF"))
-		
+
 	indexTypeStyle := lipgloss.NewStyle().
 		Italic(true).
 		Foreground(lipgloss.Color("#AAFFAA"))
-	
+
 	// For demo, we'll parse the index string to extract type and involved columns
 	// In a real scenario, you might have more structured index data
 	for i, idx := range visibleIndices {
@@ -1004,11 +1035,11 @@ func RenderTableIndices(tableName string, indices []string, scrollPosition int) 
 		if i%2 == 1 {
 			rowStyle = rowStyle.Background(lipgloss.Color("#222233"))
 		}
-		
+
 		// Extract index type (simple demo parsing)
 		indexName := idx
 		indexType := "INDEX"
-		
+
 		if strings.HasPrefix(strings.ToUpper(idx), "PRIMARY") {
 			indexType = "PRIMARY"
 		} else if strings.HasPrefix(strings.ToUpper(idx), "UNIQUE") {
@@ -1016,7 +1047,7 @@ func RenderTableIndices(tableName string, indices []string, scrollPosition int) 
 		} else if strings.HasPrefix(strings.ToUpper(idx), "IDX_") || strings.HasPrefix(idx, "index_") {
 			indexType = "INDEX"
 		}
-		
+
 		// Extract columns (simplified - in real app you would have actual index metadata with columns)
 		columns := "N/A"
 		if strings.Contains(idx, "_") {
@@ -1025,42 +1056,42 @@ func RenderTableIndices(tableName string, indices []string, scrollPosition int) 
 				columns = strings.Join(parts[1:], ", ")
 			}
 		}
-		
+
 		// Format fields with proper alignment and styling
 		nameText := rowStyle.Render(" " + indexNameStyle.Render(model.TruncateWithEllipsis(indexName, 30)))
 		typeText := rowStyle.Render(" " + indexTypeStyle.Render(model.TruncateWithEllipsis(indexType, 10)))
 		columnsText := rowStyle.Render(" " + model.TruncateWithEllipsis(columns, 25) + " ")
-		
+
 		sb.WriteString(nameText + typeText + columnsText)
 		sb.WriteString("\n")
 	}
-	
+
 	// Add more indicator and pagination info
-	if scrollPosition + len(visibleIndices) < len(indices) {
+	if scrollPosition+len(visibleIndices) < len(indices) {
 		indicatorStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#AAAAAA")).
 			Align(lipgloss.Center)
-			
+
 		sb.WriteString("\n")
 		sb.WriteString(indicatorStyle.Render("↓ More indices"))
 	}
-	
+
 	// Add scroll position indicator with nice styling
 	if len(indices) > maxVisibleRows {
 		paginationStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#999999")).
 			Align(lipgloss.Right).
 			PaddingTop(1)
-			
-		paginationText := fmt.Sprintf("Indices %d-%d of %d", 
-			scrollPosition+1, 
-			scrollPosition+len(visibleIndices), 
+
+		paginationText := fmt.Sprintf("Indices %d-%d of %d",
+			scrollPosition+1,
+			scrollPosition+len(visibleIndices),
 			len(indices))
-			
+
 		sb.WriteString("\n")
 		sb.WriteString(paginationStyle.Render(paginationText))
 	}
-	
+
 	return sb.String()
 }
 
@@ -1110,10 +1141,9 @@ func RenderEditModal(styles Styles, termWidth, termHeight int, fieldName, editBu
 
 	// Display buffer with a cursor indicator (simple pipe char)
 	// Truncate if too long for the modal width
-	maxEditTextWidth := modalWidth - 4 // Account for padding
+	maxEditTextWidth := modalWidth - 4                                                // Account for padding
 	displayBuffer := model.TruncateWithEllipsis(editBuffer, maxEditTextWidth-1) + "|" // Add cursor
 	editLine := editAreaStyle.Width(maxEditTextWidth).Render(displayBuffer)
-
 
 	// Help text
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#AAAAAA")).Italic(true)
