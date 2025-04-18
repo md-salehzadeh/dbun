@@ -502,7 +502,7 @@ func (m *AppModel) handleRightPanelKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Data mode specific navigation
+	// Data mode specific navigation and actions
 	if m.mode == model.DataMode {
 		switch msg.String() {
 		case "up", "k":
@@ -562,6 +562,8 @@ func (m *AppModel) handleRightPanelKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "ctrl+e":
 			// Enter MODAL edit mode for the current cell
 			return m.enterModalEditMode(), nil
+		case "ctrl+n":
+			return m.setCellToNull(), nil
 		}
 	}
 	
@@ -675,22 +677,12 @@ func (m *AppModel) getCurrentCellValue() string {
 			// Format the value based on its type
 			if val, ok := row[colName]; ok {
 				if val == nil {
-					return "NULL"
+					// Return empty string for NULL values instead of "NULL"
+					return "" 
 				}
 				
-				switch v := val.(type) {
-				case bool:
-					if v {
-						return "Yes"
-					}
-					return "No"
-				case int, int8, int16, int32, int64:
-					return fmt.Sprintf("%d", v)
-				case float32, float64:
-					return fmt.Sprintf("%.2f", v)
-				default:
-					return fmt.Sprintf("%v", v)
-				}
+				// Use FormatValue from model package for consistency
+				return model.FormatValue(val)
 			}
 		}
 	}
@@ -725,8 +717,10 @@ func (m *AppModel) applyEdit() {
 		return
 	}
 	
-	colName := metadata[targetCol].Name
-	colType := metadata[targetCol].Type
+	colMeta := metadata[targetCol] // Get the specific column metadata
+	colName := colMeta.Name
+	colType := colMeta.Type
+	isNullable := colMeta.Nullable
 	
 	// Get the row
 	row := data[targetRow]
@@ -734,29 +728,53 @@ func (m *AppModel) applyEdit() {
 	// Parse the edited value based on column type
 	var newValue interface{}
 	
-	// Handle NULL value
-	if m.editBuffer == "NULL" || m.editBuffer == "null" {
-		newValue = nil
+	// Handle empty input for nullable columns -> treat as empty string
+	if m.editBuffer == "" && isNullable {
+		newValue = "" 
 	} else {
-		// Parse based on data type
+		// Parse based on data type (existing logic)
 		if strings.Contains(colType, "int") {
 			if val, err := model.ParseInt(m.editBuffer); err == nil {
 				newValue = val
+			} else if isNullable { 
+				// If parsing fails and column is nullable, set to nil (or keep original?)
+				// Let's keep nil for now as empty string doesn't make sense for int
+				newValue = nil 
+			} else {
+				newValue = row[colName] // Keep original if not nullable and parse fails
 			}
 		} else if strings.Contains(colType, "float") || 
 				strings.Contains(colType, "double") || 
 				strings.Contains(colType, "decimal") {
 			if val, err := model.ParseFloat(m.editBuffer); err == nil {
 				newValue = val
+			} else if isNullable {
+				newValue = nil // Keep nil for parse errors on nullable numerics
+			} else {
+				newValue = row[colName]
 			}
 		} else if strings.Contains(colType, "bool") || 
 				strings.Contains(colType, "tinyint(1)") {
-			newValue = m.editBuffer == "Yes" || m.editBuffer == "yes" || 
-					  m.editBuffer == "true" || m.editBuffer == "TRUE" || 
-					  m.editBuffer == "1"
+			lowerBuffer := strings.ToLower(m.editBuffer)
+			if lowerBuffer == "true" || lowerBuffer == "yes" || lowerBuffer == "1" {
+				newValue = true
+			} else if lowerBuffer == "false" || lowerBuffer == "no" || lowerBuffer == "0" {
+				newValue = false
+			} else if isNullable { 
+				newValue = nil // Keep nil for parse errors on nullable bools
+			} else { 
+				newValue = false // Default to false for non-nullable bools on parse error
+			}
 		} else {
-			// Default to string for other types
-			newValue = m.editBuffer
+			// Default to string for other types (VARCHAR, TEXT, etc.)
+			// Empty string for nullable is handled above.
+			// If the buffer is empty and not nullable, set empty string
+			if m.editBuffer == "" && !isNullable {
+				newValue = "" // Set non-nullable strings to empty string if buffer is empty
+			} else {
+				// Treat the buffer content as a string, including "NULL" or "null"
+				newValue = m.editBuffer
+			}
 		}
 	}
 	
@@ -766,6 +784,50 @@ func (m *AppModel) applyEdit() {
 	m.tableData[table] = data
 }
 
+// New function to handle setting cell to NULL
+func (m *AppModel) setCellToNull() tea.Model {
+	// Only works in data mode and when right panel has focus
+	if m.mode != model.DataMode || m.focusLeft {
+		return m
+	}
+
+	if m.activeTableIdx < 0 || m.activeTableIdx >= len(m.tables) {
+		return m
+	}
+	
+	table := m.tables[m.activeTableIdx]
+	
+	// Get data and metadata
+	data, dataOk := m.tableData[table]
+	metadata, metaOk := m.tableMetadata[table]
+	
+	// Validate cursor position
+	if !dataOk || !metaOk || m.cursorRow >= len(data) || m.cursorCol >= len(metadata) {
+		return m
+	}
+	
+	colMeta := metadata[m.cursorCol]
+	
+	// Check if the column is nullable
+	if colMeta.Nullable {
+		colName := colMeta.Name
+		row := data[m.cursorRow]
+		
+		// Set the value to nil directly in memory
+		row[colName] = nil
+		data[m.cursorRow] = row
+		m.tableData[table] = data
+		
+		// Optionally: Add feedback to the user (e.g., status message)
+		// m.statusMessage = fmt.Sprintf("Cell [%d, %d] set to NULL", m.cursorRow, m.cursorCol)
+	} else {
+		// Optionally: Add feedback if column is not nullable
+		// m.statusMessage = fmt.Sprintf("Column '%s' is not nullable", colMeta.Name)
+	}
+
+	return m
+}
+
 func (m AppModel) View() string {
 	// Check if connected to database
 	if (!m.connected) {
@@ -773,7 +835,7 @@ func (m AppModel) View() string {
 	}
 
 	// Ensure we have valid dimensions
-	if m.width == 0 || m.height == 0 {
+	if (m.width == 0 || m.height == 0) {
 		return "Loading..."
 	}
 
@@ -865,9 +927,10 @@ func (m AppModel) View() string {
 			Foreground(lipgloss.Color("#999999"))
 		
 		doc.WriteString("\n")
-		doc.WriteString(helpStyle.Render("Navigation: ↑/↓/←/→ or j/k/h/l | Edit: e or Enter | Cancel: Esc"))
+		// Updated help text to use Ctrl+N
+		doc.WriteString(helpStyle.Render("Navigation: ↑/↓/←/→ or j/k/h/l | Edit: e/Enter | Modal Edit: Ctrl+E | Set Null: Ctrl+N")) 
 		doc.WriteString("\n")
-		doc.WriteString(helpStyle.Render("Scroll: PgUp/PgDn/Home/End"))
+		doc.WriteString(helpStyle.Render("Scroll: PgUp/PgDn/Home/End | Switch View: d/s/i | Toggle Help: ? | Quit: q/Ctrl+C")) // Added more help
 		if m.editing {
 			doc.WriteString("\n")
 			doc.WriteString(helpStyle.Render("Editing: Type to modify | Submit: Enter | Cancel: Esc"))
