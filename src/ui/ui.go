@@ -226,7 +226,7 @@ func (s Styles) UpdateStyles(focusLeft bool, mode model.ViewMode) Styles {
 }
 
 // RenderTableList renders the list of tables with selection indicators
-func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx int, scrollPosition int) string {
+func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx int, scrollPosition int, filtering bool, filterText string, totalCount int) string {
 	// Calculate inner height available for list items
 	// Overhead: TopBorder(1), BottomBorder(1), Title(1), Blank after Title(1), TopScrollIndicator(1/0), BottomScrollIndicator(1/0), Pagination(1/0), Blank before Pagination(1/0)
 	boxInnerHeight := styles.SidebarStyle.GetHeight() - 2 // Account for top/bottom border
@@ -298,6 +298,40 @@ func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx
 	content.WriteString(titleStyle.Render("TABLES"))
 	content.WriteString("\n") // Blank line after title
 	currentContentHeight += 2
+	
+	// Show filter input if active or filter indicator if applied
+	if filtering {
+		// Show active filter input mode
+		filterStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Background(lipgloss.Color("#444444")).
+			Width(styles.SidebarStyle.GetWidth() - 4).
+			Padding(0, 1)
+
+		// Show filter with cursor indicator
+		filterDisplay := "/" + filterText
+		if len(filterText) == 0 {
+			filterDisplay += "|" // Add cursor at the end when empty
+		} else {
+			filterDisplay += "|" // Add cursor at the end
+		}
+		
+		content.WriteString(filterStyle.Render(filterDisplay))
+		content.WriteString("\n\n") // Two blank lines after filter
+		currentContentHeight += 3   // Filter + 2 blank lines
+	} else if len(filterText) > 0 && len(tables) < totalCount {
+		// Show active filter, but not in editing mode
+		filterStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#AAAAAA")).
+			Width(styles.SidebarStyle.GetWidth() - 4).
+			Padding(0, 1)
+
+		filterDisplay := "Filter: " + filterText
+		
+		content.WriteString(filterStyle.Render(filterDisplay))
+		content.WriteString("\n\n") // Two blank lines after filter
+		currentContentHeight += 3   // Filter indicator + 2 blank lines
+	}
 
 	// Add scroll indicator if needed
 	if scrollPosition > 0 {
@@ -419,15 +453,25 @@ func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx
 }
 
 // RenderStatusBar renders the application status bar
-func RenderStatusBar(styles Styles, width int) string {
+func RenderStatusBar(styles Styles, width int, filtering bool, filterCount int, totalCount int) string {
 	w := lipgloss.Width
 
 	statusKey := styles.StatusStyle.Render("STATUS")
 	encoding := styles.EncodingStyle.Render("UTF-8")
 	fishCake := styles.FishCakeStyle.Render("🍥 Fish Cake")
+	
+	statusText := "Ravishing"
+	// Show filter info even when not in filtering mode (as long as filter is applied)
+	if filtering {
+		statusText = fmt.Sprintf("Filtering... %d/%d tables shown", filterCount, totalCount)
+	} else if filterCount < totalCount {
+		// Also show filter applied state when not actively filtering
+		statusText = fmt.Sprintf("Filtered: %d/%d tables shown", filterCount, totalCount)
+	}
+	
 	statusVal := styles.StatusTextStyle.
 		Width(width - w(statusKey) - w(encoding) - w(fishCake) - 5).
-		Render("Ravishing")
+		Render(statusText)
 
 	bar := lipgloss.JoinHorizontal(lipgloss.Top,
 		statusKey,

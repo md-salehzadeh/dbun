@@ -45,9 +45,14 @@ type AppModel struct {
 	editBuffer     string
 	editingField   string
 	showEditHelp   bool
-	showEditModal  bool // New: Flag for modal visibility
-	modalTargetRow int  // New: Target row for modal edit
-	modalTargetCol int  // New: Target col for modal edit
+	showEditModal  bool // Flag for modal visibility
+	modalTargetRow int  // Target row for modal edit
+	modalTargetCol int  // Target col for modal edit
+	
+	// Filtering state
+	filtering      bool  // Whether filtering is active
+	filterBuffer   string // Filter input text
+	filteredTables []string // List of tables that match the filter
 }
 
 // Initialize the app model with database connection
@@ -243,6 +248,11 @@ func (m *AppModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEditModalKeys(msg)
 	}
 
+	// Handle filtering mode if it's active
+	if m.filtering && m.focusLeft {
+		return m.handleFilterModeKeys(msg)
+	}
+
 	// Handle global keys first
 	switch msg.String() {
 	case "ctrl+c", "q":
@@ -291,6 +301,76 @@ func (m *AppModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// Handle keys when in filter mode
+func (m *AppModel) handleFilterModeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		// Cancel filtering completely - remove filter and exit filter mode
+		m.filtering = false
+		m.filterBuffer = ""
+		m.filteredTables = nil
+		return m, nil
+
+	case "enter":
+		// Apply the filter and exit filter mode, but keep the filter results
+		m.applyFilter()
+		m.filtering = false // Exit filtering mode while keeping filteredTables
+		return m, nil
+
+	case "backspace":
+		// Delete last character and update filter in real-time
+		if len(m.filterBuffer) > 0 {
+			m.filterBuffer = m.filterBuffer[:len(m.filterBuffer)-1]
+			m.applyFilter()
+		}
+		return m, nil
+
+	default:
+		// Only add printable characters (ASCII 32-126) to the filter buffer
+		if len(msg.String()) == 1 && msg.String()[0] >= 32 && msg.String()[0] <= 126 {
+			m.filterBuffer += msg.String()
+			m.applyFilter()
+		}
+		return m, nil
+	}
+}
+
+// Apply the current filter to the tables list
+func (m *AppModel) applyFilter() {
+	if m.filterBuffer == "" {
+		// If filter is empty, show all tables
+		m.filteredTables = nil
+		return
+	}
+
+	// Filter the tables list based on case-insensitive substring match
+	m.filteredTables = []string{}
+	filterLower := strings.ToLower(m.filterBuffer)
+	
+	for _, table := range m.tables {
+		if strings.Contains(strings.ToLower(table), filterLower) {
+			m.filteredTables = append(m.filteredTables, table)
+		}
+	}
+
+	// Reset selection if needed
+	if len(m.filteredTables) > 0 {
+		if m.selectedIdx >= len(m.filteredTables) {
+			m.selectedIdx = len(m.filteredTables) - 1
+		}
+	} else {
+		m.selectedIdx = 0
+	}
+}
+
+// Helper method to get either filtered tables or all tables
+func (m *AppModel) getFilteredOrAllTables() []string {
+	if m.filteredTables != nil {
+		return m.filteredTables
+	}
+	return m.tables
+}
+
 // Handle keys when in edit mode
 func (m *AppModel) handleEditModeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
@@ -326,6 +406,20 @@ func (m *AppModel) handleEditModeKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // Handle keys when focus is on the left panel (table list)
 func (m *AppModel) handleLeftPanelKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "esc":
+		// Clear filter if one is applied
+		if m.filteredTables != nil {
+			m.filterBuffer = ""
+			m.filteredTables = nil
+			m.selectedIdx = 0 // Reset selection to the first item
+		}
+		return m, nil
+	case "/":
+		// Activate filter mode
+		m.filtering = true
+		m.filterBuffer = ""
+		m.filteredTables = nil
+		return m, nil
 	case "up", "k":
 		if m.selectedIdx > 0 {
 			m.selectedIdx--
@@ -337,7 +431,9 @@ func (m *AppModel) handleLeftPanelKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "down", "j":
-		if m.selectedIdx < len(m.tables)-1 {
+		tablesList := m.getFilteredOrAllTables()
+
+		if m.selectedIdx < len(tablesList)-1 {
 			m.selectedIdx++
 
 			// Calculate visible height (approximate based on main height minus borders)
@@ -351,11 +447,22 @@ func (m *AppModel) handleLeftPanelKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		// Activate the selected table
-		m.activeTableIdx = m.selectedIdx
-		// Reset main content scroll when changing tables
-		m.mainScroll = 0
-		m.cursorRow = 0
-		m.cursorCol = 0
+		tablesList := m.getFilteredOrAllTables()
+		if len(tablesList) > 0 && m.selectedIdx < len(tablesList) {
+			// Find the real index in the full tables list
+			selectedTable := tablesList[m.selectedIdx]
+			for i, table := range m.tables {
+				if table == selectedTable {
+					m.activeTableIdx = i
+					break
+				}
+			}
+			
+			// Reset main content scroll when changing tables
+			m.mainScroll = 0
+			m.cursorRow = 0
+			m.cursorCol = 0
+		}
 		return m, nil
 	case "pgup":
 		// Page up - scroll up by visible height
@@ -374,8 +481,9 @@ func (m *AppModel) handleLeftPanelKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "pgdown":
 		// Page down - scroll down by visible height
+		tablesList := m.getFilteredOrAllTables()
 		visibleHeight := m.styles.SidebarStyle.GetHeight() - 2
-		maxScroll := len(m.tables) - visibleHeight
+		maxScroll := len(tablesList) - visibleHeight
 		if maxScroll < 0 {
 			maxScroll = 0
 		}
@@ -390,8 +498,8 @@ func (m *AppModel) handleLeftPanelKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectedIdx = m.sidebarScroll
 		} else if m.selectedIdx >= m.sidebarScroll+visibleHeight {
 			m.selectedIdx = m.sidebarScroll + visibleHeight - 1
-			if m.selectedIdx >= len(m.tables) {
-				m.selectedIdx = len(m.tables) - 1
+			if m.selectedIdx >= len(tablesList) {
+				m.selectedIdx = len(tablesList) - 1
 			}
 		}
 		return m, nil
@@ -404,8 +512,9 @@ func (m *AppModel) handleLeftPanelKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "end":
 		// Scroll to bottom
+		tablesList := m.getFilteredOrAllTables()
 		visibleHeight := m.styles.SidebarStyle.GetHeight() - 2
-		maxScroll := len(m.tables) - visibleHeight
+		maxScroll := len(tablesList) - visibleHeight
 		if maxScroll < 0 {
 			maxScroll = 0
 		}
@@ -855,7 +964,8 @@ func (m AppModel) View() string {
 	mainBoxWidth := m.width - sidebarWidth - 4 // Account for borders
 
 	// Render table list sidebar
-	sidebarView := ui.RenderTableList(styles, m.tables, m.selectedIdx, m.activeTableIdx, m.sidebarScroll)
+	tablesToShow := m.getFilteredOrAllTables()
+	sidebarView := ui.RenderTableList(styles, tablesToShow, m.selectedIdx, m.activeTableIdx, m.sidebarScroll, m.filtering, m.filterBuffer, len(m.tables))
 
 	// Render main content based on the selected table and mode
 	var mainContent string
@@ -915,7 +1025,9 @@ func (m AppModel) View() string {
 	doc.WriteString(layout)
 
 	// Add status bar
-	statusBar := ui.RenderStatusBar(styles, m.width)
+	filterCount := len(tablesToShow)
+	totalCount := len(m.tables)
+	statusBar := ui.RenderStatusBar(styles, m.width, m.filtering, filterCount, totalCount)
 	doc.WriteString("\n" + statusBar)
 
 	// Add help text if enabled
@@ -925,10 +1037,10 @@ func (m AppModel) View() string {
 			Foreground(lipgloss.Color("#999999"))
 
 		doc.WriteString("\n")
-		// Updated help text to use Ctrl+N
+		// Include filtering in help text
 		doc.WriteString(helpStyle.Render("Navigation: ↑/↓/←/→ or j/k/h/l | Edit: e/Enter | Modal Edit: Ctrl+E | Set Null: Ctrl+N"))
 		doc.WriteString("\n")
-		doc.WriteString(helpStyle.Render("Scroll: PgUp/PgDn/Home/End | Switch View: d/s/i | Toggle Help: ? | Quit: q/Ctrl+C")) // Added more help
+		doc.WriteString(helpStyle.Render("Scroll: PgUp/PgDn/Home/End | Switch View: d/s/i | Filter Tables: / | Toggle Help: ? | Quit: q/Ctrl+C"))
 		if m.editing {
 			doc.WriteString("\n")
 			doc.WriteString(helpStyle.Render("Editing: Type to modify | Submit: Enter | Cancel: Esc"))
