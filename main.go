@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -51,6 +52,14 @@ type model struct {
 	orders     []Order
 	products   []Product
 	categories []Category
+	
+	// Editing state
+	editing       bool   // Whether we're in editing mode
+	cursorRow     int    // Current cursor row in the table
+	cursorCol     int    // Current cursor column in the table
+	editBuffer    string // Buffer for the current edit
+	editingField  string // Name of the field being edited
+	showEditHelp  bool   // Whether to show editing help
 }
 
 // Initialize sample data for tables
@@ -103,45 +112,370 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Handle global keys first
 		switch msg.String() {
-
 		case "ctrl+c", "q":
 			return m, tea.Quit // Exit app
+
+		case "tab":
+			// Toggle focus between left and right boxes
+			m.focusLeft = !m.focusLeft
+			// Reset editing state when switching focus
+			if m.focusLeft && m.editing {
+				m.editing = false
+				m.editBuffer = ""
+			}
+			return m, nil
 
 		// Switch focus between left and right boxes
 		case "1", "h":
 			m.focusLeft = true
+			// Reset editing state when switching focus
+			if m.editing {
+				m.editing = false
+				m.editBuffer = ""
+			}
+			return m, nil
 
 		case "2", "l":
 			m.focusLeft = false
+			return m, nil
 
-		case "enter":
-			if m.focusLeft {
+		case "?":
+			// Toggle help display
+			m.showEditHelp = !m.showEditHelp
+			return m, nil
+		}
+
+		// Handle edit mode keys
+		if m.editing {
+			switch msg.String() {
+			case "esc":
+				// Cancel edit
+				m.editing = false
+				m.editBuffer = ""
+				return m, nil
+
+			case "enter":
+				// Submit edit
+				m.applyEdit()
+				m.editing = false
+				m.editBuffer = ""
+				return m, nil
+
+			case "backspace":
+				// Delete last character
+				if len(m.editBuffer) > 0 {
+					m.editBuffer = m.editBuffer[:len(m.editBuffer)-1]
+				}
+				return m, nil
+
+			default:
+				// Only add printable characters (ASCII 32-126) to the edit buffer
+				if len(msg.String()) == 1 && msg.String()[0] >= 32 && msg.String()[0] <= 126 {
+					m.editBuffer += msg.String()
+				}
+				return m, nil
+			}
+		}
+
+		// Handle normal mode keys
+		if m.focusLeft {
+			// Navigation within the left box (tables list)
+			switch msg.String() {
+			case "up", "k":
+				if m.selectedIdx > 0 {
+					m.selectedIdx--
+				}
+				return m, nil
+			case "down", "j":
+				if m.selectedIdx < len(m.tables)-1 {
+					m.selectedIdx++
+				}
+				return m, nil
+			case "enter":
 				// Activate the selected table
 				m.activeTableIdx = m.selectedIdx
+				return m, nil
 			}
-
-		default:
-			if m.focusLeft {
-				// Navigation within the left box (tables list)
+		} else {
+			// Navigation or actions in the right box (data view)
+			if m.mode == "Data" {
 				switch msg.String() {
 				case "up", "k":
-					if m.selectedIdx > 0 {
-						m.selectedIdx--
+					if m.cursorRow > 0 {
+						m.cursorRow--
 					}
+					return m, nil
 				case "down", "j":
-					if m.selectedIdx < len(m.tables)-1 {
-						m.selectedIdx++
+					// Max rows depends on the current table
+					var maxRows int
+					switch m.tables[m.activeTableIdx] {
+					case "users":
+						maxRows = len(m.users)
+					case "orders":
+						maxRows = len(m.orders)
+					case "products":
+						maxRows = len(m.products)
+					case "categories":
+						maxRows = len(m.categories)
+					default:
+						maxRows = 0
 					}
+					
+					if m.cursorRow < maxRows-1 {
+						m.cursorRow++
+					}
+					return m, nil
+				case "left", "b":
+					if m.cursorCol > 0 {
+						m.cursorCol--
+					}
+					return m, nil
+				case "right", "f":
+					// Max columns depends on the current table
+					var maxCols int
+					switch m.tables[m.activeTableIdx] {
+					case "users":
+						maxCols = 4 // ID, Username, Email, Active
+					case "orders":
+						maxCols = 4 // ID, UserID, TotalPrice, Status
+					case "products":
+						maxCols = 4 // ID, Name, Price, Category
+					case "categories":
+						maxCols = 3 // ID, Name, Slug
+					default:
+						maxCols = 0
+					}
+					
+					if m.cursorCol < maxCols-1 {
+						m.cursorCol++
+					}
+					return m, nil
+				case "enter", "e":
+					// Enter edit mode for the current cell
+					return m.enterEditMode(), nil
 				}
-			} else {
-				// Navigation or actions in the right box can be added here
-				// For now, we can leave it empty or handle right box specific keys
 			}
 		}
 	}
 
 	return m, nil
+}
+
+// Enters edit mode for the current cell
+func (m *model) enterEditMode() tea.Model {
+	// Only allow editing in data mode
+	if m.mode != "Data" {
+		return m
+	}
+	
+	// Set editing flag and prepare edit buffer
+	m.editing = true
+	m.editBuffer = m.getCurrentCellValue()
+	m.editingField = m.getCurrentFieldName()
+	
+	return m
+}
+
+// Gets the name of the current field being edited
+func (m *model) getCurrentFieldName() string {
+	table := m.tables[m.activeTableIdx]
+	
+	switch table {
+	case "users":
+		fields := []string{"ID", "Username", "Email", "Active"}
+		if m.cursorCol < len(fields) {
+			return fields[m.cursorCol]
+		}
+	case "orders":
+		fields := []string{"ID", "UserID", "TotalPrice", "Status"}
+		if m.cursorCol < len(fields) {
+			return fields[m.cursorCol]
+		}
+	case "products":
+		fields := []string{"ID", "Name", "Price", "Category"}
+		if m.cursorCol < len(fields) {
+			return fields[m.cursorCol]
+		}
+	case "categories":
+		fields := []string{"ID", "Name", "Slug"}
+		if m.cursorCol < len(fields) {
+			return fields[m.cursorCol]
+		}
+	}
+	
+	return ""
+}
+
+// Gets the current value of the selected cell
+func (m *model) getCurrentCellValue() string {
+	table := m.tables[m.activeTableIdx]
+	
+	switch table {
+	case "users":
+		if m.cursorRow >= 0 && m.cursorRow < len(m.users) {
+			user := m.users[m.cursorRow]
+			switch m.cursorCol {
+			case 0:
+				return fmt.Sprintf("%d", user.ID)
+			case 1:
+				return user.Username
+			case 2:
+				return user.Email
+			case 3:
+				if user.Active {
+					return "Yes"
+				}
+				return "No"
+			}
+		}
+	case "orders":
+		if m.cursorRow >= 0 && m.cursorRow < len(m.orders) {
+			order := m.orders[m.cursorRow]
+			switch m.cursorCol {
+			case 0:
+				return fmt.Sprintf("%d", order.ID)
+			case 1:
+				return fmt.Sprintf("%d", order.UserID)
+			case 2:
+				return fmt.Sprintf("%.2f", order.TotalPrice)
+			case 3:
+				return order.Status
+			}
+		}
+	case "products":
+		if m.cursorRow >= 0 && m.cursorRow < len(m.products) {
+			product := m.products[m.cursorRow]
+			switch m.cursorCol {
+			case 0:
+				return fmt.Sprintf("%d", product.ID)
+			case 1:
+				return product.Name
+			case 2:
+				return fmt.Sprintf("%.2f", product.Price)
+			case 3:
+				return product.Category
+			}
+		}
+	case "categories":
+		if m.cursorRow >= 0 && m.cursorRow < len(m.categories) {
+			category := m.categories[m.cursorRow]
+			switch m.cursorCol {
+			case 0:
+				return fmt.Sprintf("%d", category.ID)
+			case 1:
+				return category.Name
+			case 2:
+				return category.Slug
+			}
+		}
+	}
+	
+	return ""
+}
+
+// Apply the edit to the current cell
+func (m *model) applyEdit() {
+	table := m.tables[m.activeTableIdx]
+	
+	switch table {
+	case "users":
+		if m.cursorRow >= 0 && m.cursorRow < len(m.users) {
+			user := &m.users[m.cursorRow]
+			switch m.cursorCol {
+			case 0:
+				// ID: Parse int
+				if id, err := parseInt(m.editBuffer); err == nil {
+					user.ID = id
+				}
+			case 1:
+				// Username: String
+				user.Username = m.editBuffer
+			case 2:
+				// Email: String
+				user.Email = m.editBuffer
+			case 3:
+				// Active: Bool (Yes/No)
+				user.Active = m.editBuffer == "Yes" || m.editBuffer == "yes" || 
+				             m.editBuffer == "true" || m.editBuffer == "TRUE" || 
+				             m.editBuffer == "1"
+			}
+		}
+	case "orders":
+		if m.cursorRow >= 0 && m.cursorRow < len(m.orders) {
+			order := &m.orders[m.cursorRow]
+			switch m.cursorCol {
+			case 0:
+				// ID: Parse int
+				if id, err := parseInt(m.editBuffer); err == nil {
+					order.ID = id
+				}
+			case 1:
+				// UserID: Parse int
+				if userID, err := parseInt(m.editBuffer); err == nil {
+					order.UserID = userID
+				}
+			case 2:
+				// TotalPrice: Parse float
+				if price, err := parseFloat(m.editBuffer); err == nil {
+					order.TotalPrice = price
+				}
+			case 3:
+				// Status: String
+				order.Status = m.editBuffer
+			}
+		}
+	case "products":
+		if m.cursorRow >= 0 && m.cursorRow < len(m.products) {
+			product := &m.products[m.cursorRow]
+			switch m.cursorCol {
+			case 0:
+				// ID: Parse int
+				if id, err := parseInt(m.editBuffer); err == nil {
+					product.ID = id
+				}
+			case 1:
+				// Name: String
+				product.Name = m.editBuffer
+			case 2:
+				// Price: Parse float
+				if price, err := parseFloat(m.editBuffer); err == nil {
+					product.Price = price
+				}
+			case 3:
+				// Category: String
+				product.Category = m.editBuffer
+			}
+		}
+	case "categories":
+		if m.cursorRow >= 0 && m.cursorRow < len(m.categories) {
+			category := &m.categories[m.cursorRow]
+			switch m.cursorCol {
+			case 0:
+				// ID: Parse int
+				if id, err := parseInt(m.editBuffer); err == nil {
+					category.ID = id
+				}
+			case 1:
+				// Name: String
+				category.Name = m.editBuffer
+			case 2:
+				// Slug: String
+				category.Slug = m.editBuffer
+			}
+		}
+	}
+}
+
+// Helper function to parse int
+func parseInt(s string) (int, error) {
+	return strconv.Atoi(s)
+}
+
+// Helper function to parse float
+func parseFloat(s string) (float64, error) {
+	return strconv.ParseFloat(s, 64)
 }
 
 func (m model) View() string {
@@ -418,6 +752,15 @@ func (m model) renderUsersTable() string {
 	
 	rowStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#CCCCCC"))
+		
+	// Add styles for selected and editing cells
+	selectedCellStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("#4444AA")).
+		Foreground(lipgloss.Color("#FFFFFF"))
+	
+	editingCellStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("#AA4444")).
+		Foreground(lipgloss.Color("#FFFFFF"))
 	
 	// Add row numbers column at the beginning
 	content.WriteString(fmt.Sprintf("%-4s ", "#"))
@@ -434,13 +777,7 @@ func (m model) renderUsersTable() string {
 		// Row number
 		content.WriteString(fmt.Sprintf("%-4d ", i+1))
 		
-		// Row content with cell styling
-		activeStr := "No"
-		if user.Active {
-			activeStr = "Yes"
-		}
-		
-		// Style based on even/odd row
+			// Style based on even/odd row
 		var rowStyleToUse lipgloss.Style
 		if i%2 == 0 {
 			rowStyleToUse = rowStyle
@@ -448,13 +785,58 @@ func (m model) renderUsersTable() string {
 			rowStyleToUse = cellStyle
 		}
 		
-		// Format each cell
-		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*d ", colWidths[0], user.ID)))
-		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*s ", colWidths[1], user.Username)))
-		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*s ", colWidths[2], user.Email)))
-		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*s ", colWidths[3], activeStr)))
+		// Format each cell with appropriate highlighting
+		for j := 0; j < 4; j++ {
+			var cellText string
+			switch j {
+			case 0:
+				cellText = fmt.Sprintf("%-*d", colWidths[j], user.ID)
+			case 1:
+				cellText = fmt.Sprintf("%-*s", colWidths[j], user.Username)
+			case 2:
+				cellText = fmt.Sprintf("%-*s", colWidths[j], user.Email)
+			case 3:
+				if user.Active {
+					cellText = fmt.Sprintf("%-*s", colWidths[j], "Yes")
+				} else {
+					cellText = fmt.Sprintf("%-*s", colWidths[j], "No")
+				}
+			}
+			
+			// Add space after each cell except the last one
+			if j < 3 {
+				cellText += " "
+			}
+			
+			// Determine cell style (selected, editing, or normal)
+			if !m.focusLeft && m.cursorRow == i && m.cursorCol == j {
+				if m.editing {
+					// Editing mode - show edit buffer
+					cellText = fmt.Sprintf("%-*s", colWidths[j], m.editBuffer)
+					if j < 3 {
+						cellText += " "
+					}
+					content.WriteString(editingCellStyle.Render(cellText))
+				} else {
+					// Selected but not editing
+					content.WriteString(selectedCellStyle.Render(cellText))
+				}
+			} else {
+				// Normal cell
+				content.WriteString(rowStyleToUse.Render(cellText))
+			}
+		}
 		
 		content.WriteString("\n")
+	}
+	
+	// Show editing help if enabled
+	if m.showEditHelp && !m.focusLeft {
+		content.WriteString("\n")
+		content.WriteString("Navigation: ↑/↓/←/→ or j/k/h/l | Edit: e or Enter | Cancel: Esc\n")
+		if m.editing {
+			content.WriteString("Editing: Type to modify | Submit: Enter | Cancel: Esc\n")
+		}
 	}
 	
 	return content.String()
@@ -477,6 +859,14 @@ func (m model) renderOrdersTable() string {
 	
 	rowStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#CCCCCC"))
+		
+	selectedCellStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("#4444AA")).
+		Foreground(lipgloss.Color("#FFFFFF"))
+	
+	editingCellStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("#AA4444")).
+		Foreground(lipgloss.Color("#FFFFFF"))
 	
 	// Add row numbers column at the beginning
 	content.WriteString(fmt.Sprintf("%-4s ", "#"))
@@ -501,13 +891,63 @@ func (m model) renderOrdersTable() string {
 			rowStyleToUse = cellStyle
 		}
 		
-		// Format each cell
-		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*d ", colWidths[0], order.ID)))
-		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*d ", colWidths[1], order.UserID)))
-		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("$%-*.2f ", colWidths[2]-1, order.TotalPrice)))
-		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*s ", colWidths[3], order.Status)))
+		// Format each cell with appropriate highlighting
+		for j := 0; j < 4; j++ {
+			var cellText string
+			switch j {
+			case 0:
+				cellText = fmt.Sprintf("%-*d", colWidths[j], order.ID)
+			case 1:
+				cellText = fmt.Sprintf("%-*d", colWidths[j], order.UserID)
+			case 2:
+				cellText = fmt.Sprintf("$%-*.2f", colWidths[j]-1, order.TotalPrice)
+			case 3:
+				cellText = fmt.Sprintf("%-*s", colWidths[j], order.Status)
+			}
+			
+			// Add space after each cell except the last one
+			if j < 3 {
+				cellText += " "
+			}
+			
+			// Determine cell style (selected, editing, or normal)
+			if !m.focusLeft && m.cursorRow == i && m.cursorCol == j {
+				if m.editing {
+					// Editing mode - show edit buffer
+					if j == 2 {
+						// For price column, maintain dollar sign formatting
+						if strings.HasPrefix(m.editBuffer, "$") {
+							cellText = fmt.Sprintf("%-*s", colWidths[j], m.editBuffer)
+						} else {
+							cellText = fmt.Sprintf("$%-*s", colWidths[j]-1, m.editBuffer)
+						}
+					} else {
+						cellText = fmt.Sprintf("%-*s", colWidths[j], m.editBuffer)
+					}
+					if j < 3 {
+						cellText += " "
+					}
+					content.WriteString(editingCellStyle.Render(cellText))
+				} else {
+					// Selected but not editing
+					content.WriteString(selectedCellStyle.Render(cellText))
+				}
+			} else {
+				// Normal cell
+				content.WriteString(rowStyleToUse.Render(cellText))
+			}
+		}
 		
 		content.WriteString("\n")
+	}
+	
+	// Show editing help if enabled
+	if m.showEditHelp && !m.focusLeft {
+		content.WriteString("\n")
+		content.WriteString("Navigation: ↑/↓/←/→ or j/k/h/l | Edit: e or Enter | Cancel: Esc\n")
+		if m.editing {
+			content.WriteString("Editing: Type to modify | Submit: Enter | Cancel: Esc\n")
+		}
 	}
 	
 	return content.String()
@@ -530,6 +970,14 @@ func (m model) renderProductsTable() string {
 	
 	rowStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#CCCCCC"))
+		
+	selectedCellStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("#4444AA")).
+		Foreground(lipgloss.Color("#FFFFFF"))
+	
+	editingCellStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("#AA4444")).
+		Foreground(lipgloss.Color("#FFFFFF"))
 	
 	// Add row numbers column at the beginning
 	content.WriteString(fmt.Sprintf("%-4s ", "#"))
@@ -554,13 +1002,63 @@ func (m model) renderProductsTable() string {
 			rowStyleToUse = cellStyle
 		}
 		
-		// Format each cell
-		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*d ", colWidths[0], product.ID)))
-		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*s ", colWidths[1], product.Name)))
-		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("$%-*.2f ", colWidths[2]-1, product.Price)))
-		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*s ", colWidths[3], product.Category)))
+		// Format each cell with appropriate highlighting
+		for j := 0; j < 4; j++ {
+			var cellText string
+			switch j {
+			case 0:
+				cellText = fmt.Sprintf("%-*d", colWidths[j], product.ID)
+			case 1:
+				cellText = fmt.Sprintf("%-*s", colWidths[j], product.Name)
+			case 2:
+				cellText = fmt.Sprintf("$%-*.2f", colWidths[j]-1, product.Price)
+			case 3:
+				cellText = fmt.Sprintf("%-*s", colWidths[j], product.Category)
+			}
+			
+			// Add space after each cell except the last one
+			if j < 3 {
+				cellText += " "
+			}
+			
+			// Determine cell style (selected, editing, or normal)
+			if !m.focusLeft && m.cursorRow == i && m.cursorCol == j {
+				if m.editing {
+					// Editing mode - show edit buffer
+					if j == 2 {
+						// For price column, maintain dollar sign formatting
+						if strings.HasPrefix(m.editBuffer, "$") {
+							cellText = fmt.Sprintf("%-*s", colWidths[j], m.editBuffer)
+						} else {
+							cellText = fmt.Sprintf("$%-*s", colWidths[j]-1, m.editBuffer)
+						}
+					} else {
+						cellText = fmt.Sprintf("%-*s", colWidths[j], m.editBuffer)
+					}
+					if j < 3 {
+						cellText += " "
+					}
+					content.WriteString(editingCellStyle.Render(cellText))
+				} else {
+					// Selected but not editing
+					content.WriteString(selectedCellStyle.Render(cellText))
+				}
+			} else {
+				// Normal cell
+				content.WriteString(rowStyleToUse.Render(cellText))
+			}
+		}
 		
 		content.WriteString("\n")
+	}
+	
+	// Show editing help if enabled
+	if m.showEditHelp && !m.focusLeft {
+		content.WriteString("\n")
+		content.WriteString("Navigation: ↑/↓/←/→ or j/k/h/l | Edit: e or Enter | Cancel: Esc\n")
+		if m.editing {
+			content.WriteString("Editing: Type to modify | Submit: Enter | Cancel: Esc\n")
+		}
 	}
 	
 	return content.String()
@@ -583,6 +1081,14 @@ func (m model) renderCategoriesTable() string {
 	
 	rowStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#CCCCCC"))
+		
+	selectedCellStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("#4444AA")).
+		Foreground(lipgloss.Color("#FFFFFF"))
+	
+	editingCellStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("#AA4444")).
+		Foreground(lipgloss.Color("#FFFFFF"))
 	
 	// Add row numbers column at the beginning
 	content.WriteString(fmt.Sprintf("%-4s ", "#"))
@@ -607,12 +1113,52 @@ func (m model) renderCategoriesTable() string {
 			rowStyleToUse = cellStyle
 		}
 		
-		// Format each cell
-		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*d ", colWidths[0], category.ID)))
-		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*s ", colWidths[1], category.Name)))
-		content.WriteString(rowStyleToUse.Render(fmt.Sprintf("%-*s ", colWidths[2], category.Slug)))
+		// Format each cell with appropriate highlighting
+		for j := 0; j < 3; j++ {
+			var cellText string
+			switch j {
+			case 0:
+				cellText = fmt.Sprintf("%-*d", colWidths[j], category.ID)
+			case 1:
+				cellText = fmt.Sprintf("%-*s", colWidths[j], category.Name)
+			case 2:
+				cellText = fmt.Sprintf("%-*s", colWidths[j], category.Slug)
+			}
+			
+			// Add space after each cell except the last one
+			if j < 2 {
+				cellText += " "
+			}
+			
+			// Determine cell style (selected, editing, or normal)
+			if !m.focusLeft && m.cursorRow == i && m.cursorCol == j {
+				if m.editing {
+					// Editing mode - show edit buffer
+					cellText = fmt.Sprintf("%-*s", colWidths[j], m.editBuffer)
+					if j < 2 {
+						cellText += " "
+					}
+					content.WriteString(editingCellStyle.Render(cellText))
+				} else {
+					// Selected but not editing
+					content.WriteString(selectedCellStyle.Render(cellText))
+				}
+			} else {
+				// Normal cell
+				content.WriteString(rowStyleToUse.Render(cellText))
+			}
+		}
 		
 		content.WriteString("\n")
+	}
+	
+	// Show editing help if enabled
+	if m.showEditHelp && !m.focusLeft {
+		content.WriteString("\n")
+		content.WriteString("Navigation: ↑/↓/←/→ or j/k/h/l | Edit: e or Enter | Cancel: Esc\n")
+		if m.editing {
+			content.WriteString("Editing: Type to modify | Submit: Enter | Cancel: Esc\n")
+		}
 	}
 	
 	return content.String()
