@@ -744,45 +744,106 @@ func (m model) renderUsersTable() string {
 	// Define table styles
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
-		Background(lipgloss.Color("#222222")).
-		Foreground(lipgloss.Color("#FFFFFF"))
+		Background(lipgloss.Color("#333366")).
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
 	
+	// Normal cell styles with subtle alternating row colors
 	cellStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FFFFFF"))
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
 	
-	rowStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#CCCCCC"))
+	altRowStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Background(lipgloss.Color("#222233")).
+		Padding(0, 1)
 		
 	// Add styles for selected and editing cells
 	selectedCellStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("#4444AA")).
-		Foreground(lipgloss.Color("#FFFFFF"))
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
 	
 	editingCellStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("#AA4444")).
-		Foreground(lipgloss.Color("#FFFFFF"))
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
+		
+	// Row number style
+	rowNumStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#888888")).
+		Padding(0, 1)
 	
-	// Add row numbers column at the beginning
-	content.WriteString(fmt.Sprintf("%-4s ", "#"))
+	// Table border characters
+	topLeft := "┌"
+	topRight := "┐"
+	bottomLeft := "└"
+	bottomRight := "┘"
+	horizontal := "─"
+	vertical := "│"
+	leftT := "├"
+	rightT := "┤"
+	topT := "┬"
+	bottomT := "┴"
+	cross := "┼"
+	
+	// Calculate total table width including separators
+	totalWidth := 0
+	for _, w := range colWidths {
+		totalWidth += w + 2 // +2 for padding
+	}
+	totalWidth += len(colWidths) + 1 // +1 for each separator plus the row number separator
+	
+	// Draw top border
+	content.WriteString(topLeft)
+	content.WriteString(strings.Repeat(horizontal, 5)) // Width for row numbers
+	content.WriteString(topT)
+	for i, w := range colWidths {
+		content.WriteString(strings.Repeat(horizontal, w+2)) // +2 for padding
+		if i < len(colWidths)-1 {
+			content.WriteString(topT)
+		}
+	}
+	content.WriteString(topRight + "\n")
+	
+	// Draw header row
+	content.WriteString(vertical + " ")
+	content.WriteString(rowNumStyle.Render("#"))
+	content.WriteString(strings.Repeat(" ", 3) + vertical + " ")
 	
 	// Format the headers
 	headers := []string{"ID", "USERNAME", "EMAIL", "ACTIVE"}
 	for i, header := range headers {
-		content.WriteString(headerStyle.Render(fmt.Sprintf("%-*s ", colWidths[i], header)))
+		content.WriteString(headerStyle.Render(fmt.Sprintf("%-*s", colWidths[i], header)))
+		content.WriteString(" " + vertical + " ")
 	}
 	content.WriteString("\n")
+	
+	// Draw separator after header
+	content.WriteString(leftT)
+	content.WriteString(strings.Repeat(horizontal, 5)) // Width for row numbers
+	content.WriteString(cross)
+	for i, w := range colWidths {
+		content.WriteString(strings.Repeat(horizontal, w+2)) // +2 for padding
+		if i < len(colWidths)-1 {
+			content.WriteString(cross)
+		}
+	}
+	content.WriteString(rightT + "\n")
 	
 	// Table rows with alternating styles
 	for i, user := range m.users {
 		// Row number
-		content.WriteString(fmt.Sprintf("%-4d ", i+1))
+		content.WriteString(vertical + " ")
+		content.WriteString(rowNumStyle.Render(fmt.Sprintf("%-3d", i+1)))
+		content.WriteString(" " + vertical + " ")
 		
-			// Style based on even/odd row
+		// Style based on even/odd row
 		var rowStyleToUse lipgloss.Style
 		if i%2 == 0 {
-			rowStyleToUse = rowStyle
-		} else {
 			rowStyleToUse = cellStyle
+		} else {
+			rowStyleToUse = altRowStyle
 		}
 		
 		// Format each cell with appropriate highlighting
@@ -796,16 +857,11 @@ func (m model) renderUsersTable() string {
 			case 2:
 				cellText = fmt.Sprintf("%-*s", colWidths[j], user.Email)
 			case 3:
+				active := "No"
 				if user.Active {
-					cellText = fmt.Sprintf("%-*s", colWidths[j], "Yes")
-				} else {
-					cellText = fmt.Sprintf("%-*s", colWidths[j], "No")
+					active = "Yes"
 				}
-			}
-			
-			// Add space after each cell except the last one
-			if j < 3 {
-				cellText += " "
+				cellText = fmt.Sprintf("%-*s", colWidths[j], active)
 			}
 			
 			// Determine cell style (selected, editing, or normal)
@@ -813,9 +869,6 @@ func (m model) renderUsersTable() string {
 				if m.editing {
 					// Editing mode - show edit buffer
 					cellText = fmt.Sprintf("%-*s", colWidths[j], m.editBuffer)
-					if j < 3 {
-						cellText += " "
-					}
 					content.WriteString(editingCellStyle.Render(cellText))
 				} else {
 					// Selected but not editing
@@ -825,17 +878,46 @@ func (m model) renderUsersTable() string {
 				// Normal cell
 				content.WriteString(rowStyleToUse.Render(cellText))
 			}
+			content.WriteString(" " + vertical + " ")
 		}
 		
 		content.WriteString("\n")
+		
+		// Draw row separator if not the last row
+		if i < len(m.users)-1 {
+			content.WriteString(leftT)
+			content.WriteString(strings.Repeat(horizontal, 5)) // Width for row numbers
+			content.WriteString(cross)
+			for i, w := range colWidths {
+				content.WriteString(strings.Repeat(horizontal, w+2)) // +2 for padding
+				if i < len(colWidths)-1 {
+					content.WriteString(cross)
+				}
+			}
+			content.WriteString(rightT + "\n")
+		}
 	}
+	
+	// Draw bottom border
+	content.WriteString(bottomLeft)
+	content.WriteString(strings.Repeat(horizontal, 5)) // Width for row numbers
+	content.WriteString(bottomT)
+	for i, w := range colWidths {
+		content.WriteString(strings.Repeat(horizontal, w+2)) // +2 for padding
+		if i < len(colWidths)-1 {
+			content.WriteString(bottomT)
+		}
+	}
+	content.WriteString(bottomRight + "\n")
 	
 	// Show editing help if enabled
 	if m.showEditHelp && !m.focusLeft {
+		helpStyle := lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("#999999"))
 		content.WriteString("\n")
-		content.WriteString("Navigation: ↑/↓/←/→ or j/k/h/l | Edit: e or Enter | Cancel: Esc\n")
+		content.WriteString(helpStyle.Render("Navigation: ↑/↓/←/→ or j/k/h/l | Edit: e or Enter | Cancel: Esc"))
 		if m.editing {
-			content.WriteString("Editing: Type to modify | Submit: Enter | Cancel: Esc\n")
+			content.WriteString("\n")
+			content.WriteString(helpStyle.Render("Editing: Type to modify | Submit: Enter | Cancel: Esc"))
 		}
 	}
 	
@@ -851,44 +933,106 @@ func (m model) renderOrdersTable() string {
 	// Define table styles
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
-		Background(lipgloss.Color("#222222")).
-		Foreground(lipgloss.Color("#FFFFFF"))
+		Background(lipgloss.Color("#333366")).
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
 	
+	// Normal cell styles with subtle alternating row colors
 	cellStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FFFFFF"))
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
 	
-	rowStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#CCCCCC"))
+	altRowStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Background(lipgloss.Color("#222233")).
+		Padding(0, 1)
 		
+	// Add styles for selected and editing cells
 	selectedCellStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("#4444AA")).
-		Foreground(lipgloss.Color("#FFFFFF"))
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
 	
 	editingCellStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("#AA4444")).
-		Foreground(lipgloss.Color("#FFFFFF"))
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
+		
+	// Row number style
+	rowNumStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#888888")).
+		Padding(0, 1)
 	
-	// Add row numbers column at the beginning
-	content.WriteString(fmt.Sprintf("%-4s ", "#"))
+	// Table border characters
+	topLeft := "┌"
+	topRight := "┐"
+	bottomLeft := "└"
+	bottomRight := "┘"
+	horizontal := "─"
+	vertical := "│"
+	leftT := "├"
+	rightT := "┤"
+	topT := "┬"
+	bottomT := "┴"
+	cross := "┼"
+	
+	// Calculate total table width including separators
+	totalWidth := 0
+	for _, w := range colWidths {
+		totalWidth += w + 2 // +2 for padding
+	}
+	totalWidth += len(colWidths) + 1 // +1 for each separator plus the row number separator
+	
+	// Draw top border
+	content.WriteString(topLeft)
+	content.WriteString(strings.Repeat(horizontal, 5)) // Width for row numbers
+	content.WriteString(topT)
+	for i, w := range colWidths {
+		content.WriteString(strings.Repeat(horizontal, w+2)) // +2 for padding
+		if i < len(colWidths)-1 {
+			content.WriteString(topT)
+		}
+	}
+	content.WriteString(topRight + "\n")
+	
+	// Draw header row
+	content.WriteString(vertical + " ")
+	content.WriteString(rowNumStyle.Render("#"))
+	content.WriteString(strings.Repeat(" ", 3) + vertical + " ")
 	
 	// Format the headers
 	headers := []string{"ID", "USER ID", "TOTAL PRICE", "STATUS"}
 	for i, header := range headers {
-		content.WriteString(headerStyle.Render(fmt.Sprintf("%-*s ", colWidths[i], header)))
+		content.WriteString(headerStyle.Render(fmt.Sprintf("%-*s", colWidths[i], header)))
+		content.WriteString(" " + vertical + " ")
 	}
 	content.WriteString("\n")
+	
+	// Draw separator after header
+	content.WriteString(leftT)
+	content.WriteString(strings.Repeat(horizontal, 5)) // Width for row numbers
+	content.WriteString(cross)
+	for i, w := range colWidths {
+		content.WriteString(strings.Repeat(horizontal, w+2)) // +2 for padding
+		if i < len(colWidths)-1 {
+			content.WriteString(cross)
+		}
+	}
+	content.WriteString(rightT + "\n")
 	
 	// Table rows with alternating styles
 	for i, order := range m.orders {
 		// Row number
-		content.WriteString(fmt.Sprintf("%-4d ", i+1))
+		content.WriteString(vertical + " ")
+		content.WriteString(rowNumStyle.Render(fmt.Sprintf("%-3d", i+1)))
+		content.WriteString(" " + vertical + " ")
 		
 		// Style based on even/odd row
 		var rowStyleToUse lipgloss.Style
 		if i%2 == 0 {
-			rowStyleToUse = rowStyle
-		} else {
 			rowStyleToUse = cellStyle
+		} else {
+			rowStyleToUse = altRowStyle
 		}
 		
 		// Format each cell with appropriate highlighting
@@ -905,11 +1049,6 @@ func (m model) renderOrdersTable() string {
 				cellText = fmt.Sprintf("%-*s", colWidths[j], order.Status)
 			}
 			
-			// Add space after each cell except the last one
-			if j < 3 {
-				cellText += " "
-			}
-			
 			// Determine cell style (selected, editing, or normal)
 			if !m.focusLeft && m.cursorRow == i && m.cursorCol == j {
 				if m.editing {
@@ -924,9 +1063,6 @@ func (m model) renderOrdersTable() string {
 					} else {
 						cellText = fmt.Sprintf("%-*s", colWidths[j], m.editBuffer)
 					}
-					if j < 3 {
-						cellText += " "
-					}
 					content.WriteString(editingCellStyle.Render(cellText))
 				} else {
 					// Selected but not editing
@@ -936,17 +1072,46 @@ func (m model) renderOrdersTable() string {
 				// Normal cell
 				content.WriteString(rowStyleToUse.Render(cellText))
 			}
+			content.WriteString(" " + vertical + " ")
 		}
 		
 		content.WriteString("\n")
+		
+		// Draw row separator if not the last row
+		if i < len(m.orders)-1 {
+			content.WriteString(leftT)
+			content.WriteString(strings.Repeat(horizontal, 5)) // Width for row numbers
+			content.WriteString(cross)
+			for i, w := range colWidths {
+				content.WriteString(strings.Repeat(horizontal, w+2)) // +2 for padding
+				if i < len(colWidths)-1 {
+					content.WriteString(cross)
+				}
+			}
+			content.WriteString(rightT + "\n")
+		}
 	}
+	
+	// Draw bottom border
+	content.WriteString(bottomLeft)
+	content.WriteString(strings.Repeat(horizontal, 5)) // Width for row numbers
+	content.WriteString(bottomT)
+	for i, w := range colWidths {
+		content.WriteString(strings.Repeat(horizontal, w+2)) // +2 for padding
+		if i < len(colWidths)-1 {
+			content.WriteString(bottomT)
+		}
+	}
+	content.WriteString(bottomRight + "\n")
 	
 	// Show editing help if enabled
 	if m.showEditHelp && !m.focusLeft {
+		helpStyle := lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("#999999"))
 		content.WriteString("\n")
-		content.WriteString("Navigation: ↑/↓/←/→ or j/k/h/l | Edit: e or Enter | Cancel: Esc\n")
+		content.WriteString(helpStyle.Render("Navigation: ↑/↓/←/→ or j/k/h/l | Edit: e or Enter | Cancel: Esc"))
 		if m.editing {
-			content.WriteString("Editing: Type to modify | Submit: Enter | Cancel: Esc\n")
+			content.WriteString("\n")
+			content.WriteString(helpStyle.Render("Editing: Type to modify | Submit: Enter | Cancel: Esc"))
 		}
 	}
 	
@@ -962,44 +1127,106 @@ func (m model) renderProductsTable() string {
 	// Define table styles
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
-		Background(lipgloss.Color("#222222")).
-		Foreground(lipgloss.Color("#FFFFFF"))
+		Background(lipgloss.Color("#333366")).
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
 	
+	// Normal cell styles with subtle alternating row colors
 	cellStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FFFFFF"))
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
 	
-	rowStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#CCCCCC"))
+	altRowStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Background(lipgloss.Color("#222233")).
+		Padding(0, 1)
 		
+	// Add styles for selected and editing cells
 	selectedCellStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("#4444AA")).
-		Foreground(lipgloss.Color("#FFFFFF"))
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
 	
 	editingCellStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("#AA4444")).
-		Foreground(lipgloss.Color("#FFFFFF"))
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
+		
+	// Row number style
+	rowNumStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#888888")).
+		Padding(0, 1)
 	
-	// Add row numbers column at the beginning
-	content.WriteString(fmt.Sprintf("%-4s ", "#"))
+	// Table border characters
+	topLeft := "┌"
+	topRight := "┐"
+	bottomLeft := "└"
+	bottomRight := "┘"
+	horizontal := "─"
+	vertical := "│"
+	leftT := "├"
+	rightT := "┤"
+	topT := "┬"
+	bottomT := "┴"
+	cross := "┼"
+	
+	// Calculate total table width including separators
+	totalWidth := 0
+	for _, w := range colWidths {
+		totalWidth += w + 2 // +2 for padding
+	}
+	totalWidth += len(colWidths) + 1 // +1 for each separator plus the row number separator
+	
+	// Draw top border
+	content.WriteString(topLeft)
+	content.WriteString(strings.Repeat(horizontal, 5)) // Width for row numbers
+	content.WriteString(topT)
+	for i, w := range colWidths {
+		content.WriteString(strings.Repeat(horizontal, w+2)) // +2 for padding
+		if i < len(colWidths)-1 {
+			content.WriteString(topT)
+		}
+	}
+	content.WriteString(topRight + "\n")
+	
+	// Draw header row
+	content.WriteString(vertical + " ")
+	content.WriteString(rowNumStyle.Render("#"))
+	content.WriteString(strings.Repeat(" ", 3) + vertical + " ")
 	
 	// Format the headers
 	headers := []string{"ID", "NAME", "PRICE", "CATEGORY"}
 	for i, header := range headers {
-		content.WriteString(headerStyle.Render(fmt.Sprintf("%-*s ", colWidths[i], header)))
+		content.WriteString(headerStyle.Render(fmt.Sprintf("%-*s", colWidths[i], header)))
+		content.WriteString(" " + vertical + " ")
 	}
 	content.WriteString("\n")
+	
+	// Draw separator after header
+	content.WriteString(leftT)
+	content.WriteString(strings.Repeat(horizontal, 5)) // Width for row numbers
+	content.WriteString(cross)
+	for i, w := range colWidths {
+		content.WriteString(strings.Repeat(horizontal, w+2)) // +2 for padding
+		if i < len(colWidths)-1 {
+			content.WriteString(cross)
+		}
+	}
+	content.WriteString(rightT + "\n")
 	
 	// Table rows with alternating styles
 	for i, product := range m.products {
 		// Row number
-		content.WriteString(fmt.Sprintf("%-4d ", i+1))
+		content.WriteString(vertical + " ")
+		content.WriteString(rowNumStyle.Render(fmt.Sprintf("%-3d", i+1)))
+		content.WriteString(" " + vertical + " ")
 		
 		// Style based on even/odd row
 		var rowStyleToUse lipgloss.Style
 		if i%2 == 0 {
-			rowStyleToUse = rowStyle
-		} else {
 			rowStyleToUse = cellStyle
+		} else {
+			rowStyleToUse = altRowStyle
 		}
 		
 		// Format each cell with appropriate highlighting
@@ -1016,11 +1243,6 @@ func (m model) renderProductsTable() string {
 				cellText = fmt.Sprintf("%-*s", colWidths[j], product.Category)
 			}
 			
-			// Add space after each cell except the last one
-			if j < 3 {
-				cellText += " "
-			}
-			
 			// Determine cell style (selected, editing, or normal)
 			if !m.focusLeft && m.cursorRow == i && m.cursorCol == j {
 				if m.editing {
@@ -1035,9 +1257,6 @@ func (m model) renderProductsTable() string {
 					} else {
 						cellText = fmt.Sprintf("%-*s", colWidths[j], m.editBuffer)
 					}
-					if j < 3 {
-						cellText += " "
-					}
 					content.WriteString(editingCellStyle.Render(cellText))
 				} else {
 					// Selected but not editing
@@ -1047,17 +1266,46 @@ func (m model) renderProductsTable() string {
 				// Normal cell
 				content.WriteString(rowStyleToUse.Render(cellText))
 			}
+			content.WriteString(" " + vertical + " ")
 		}
 		
 		content.WriteString("\n")
+		
+		// Draw row separator if not the last row
+		if i < len(m.products)-1 {
+			content.WriteString(leftT)
+			content.WriteString(strings.Repeat(horizontal, 5)) // Width for row numbers
+			content.WriteString(cross)
+			for i, w := range colWidths {
+				content.WriteString(strings.Repeat(horizontal, w+2)) // +2 for padding
+				if i < len(colWidths)-1 {
+					content.WriteString(cross)
+				}
+			}
+			content.WriteString(rightT + "\n")
+		}
 	}
+	
+	// Draw bottom border
+	content.WriteString(bottomLeft)
+	content.WriteString(strings.Repeat(horizontal, 5)) // Width for row numbers
+	content.WriteString(bottomT)
+	for i, w := range colWidths {
+		content.WriteString(strings.Repeat(horizontal, w+2)) // +2 for padding
+		if i < len(colWidths)-1 {
+			content.WriteString(bottomT)
+		}
+	}
+	content.WriteString(bottomRight + "\n")
 	
 	// Show editing help if enabled
 	if m.showEditHelp && !m.focusLeft {
+		helpStyle := lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("#999999"))
 		content.WriteString("\n")
-		content.WriteString("Navigation: ↑/↓/←/→ or j/k/h/l | Edit: e or Enter | Cancel: Esc\n")
+		content.WriteString(helpStyle.Render("Navigation: ↑/↓/←/→ or j/k/h/l | Edit: e or Enter | Cancel: Esc"))
 		if m.editing {
-			content.WriteString("Editing: Type to modify | Submit: Enter | Cancel: Esc\n")
+			content.WriteString("\n")
+			content.WriteString(helpStyle.Render("Editing: Type to modify | Submit: Enter | Cancel: Esc"))
 		}
 	}
 	
@@ -1073,44 +1321,106 @@ func (m model) renderCategoriesTable() string {
 	// Define table styles
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
-		Background(lipgloss.Color("#222222")).
-		Foreground(lipgloss.Color("#FFFFFF"))
+		Background(lipgloss.Color("#333366")).
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
 	
+	// Normal cell styles with subtle alternating row colors
 	cellStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FFFFFF"))
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
 	
-	rowStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#CCCCCC"))
+	altRowStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Background(lipgloss.Color("#222233")).
+		Padding(0, 1)
 		
+	// Add styles for selected and editing cells
 	selectedCellStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("#4444AA")).
-		Foreground(lipgloss.Color("#FFFFFF"))
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
 	
 	editingCellStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("#AA4444")).
-		Foreground(lipgloss.Color("#FFFFFF"))
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
+		
+	// Row number style
+	rowNumStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#888888")).
+		Padding(0, 1)
 	
-	// Add row numbers column at the beginning
-	content.WriteString(fmt.Sprintf("%-4s ", "#"))
+	// Table border characters
+	topLeft := "┌"
+	topRight := "┐"
+	bottomLeft := "└"
+	bottomRight := "┘"
+	horizontal := "─"
+	vertical := "│"
+	leftT := "├"
+	rightT := "┤"
+	topT := "┬"
+	bottomT := "┴"
+	cross := "┼"
+	
+	// Calculate total table width including separators
+	totalWidth := 0
+	for _, w := range colWidths {
+		totalWidth += w + 2 // +2 for padding
+	}
+	totalWidth += len(colWidths) + 1 // +1 for each separator plus the row number separator
+	
+	// Draw top border
+	content.WriteString(topLeft)
+	content.WriteString(strings.Repeat(horizontal, 5)) // Width for row numbers
+	content.WriteString(topT)
+	for i, w := range colWidths {
+		content.WriteString(strings.Repeat(horizontal, w+2)) // +2 for padding
+		if i < len(colWidths)-1 {
+			content.WriteString(topT)
+		}
+	}
+	content.WriteString(topRight + "\n")
+	
+	// Draw header row
+	content.WriteString(vertical + " ")
+	content.WriteString(rowNumStyle.Render("#"))
+	content.WriteString(strings.Repeat(" ", 3) + vertical + " ")
 	
 	// Format the headers
 	headers := []string{"ID", "NAME", "SLUG"}
 	for i, header := range headers {
-		content.WriteString(headerStyle.Render(fmt.Sprintf("%-*s ", colWidths[i], header)))
+		content.WriteString(headerStyle.Render(fmt.Sprintf("%-*s", colWidths[i], header)))
+		content.WriteString(" " + vertical + " ")
 	}
 	content.WriteString("\n")
+	
+	// Draw separator after header
+	content.WriteString(leftT)
+	content.WriteString(strings.Repeat(horizontal, 5)) // Width for row numbers
+	content.WriteString(cross)
+	for i, w := range colWidths {
+		content.WriteString(strings.Repeat(horizontal, w+2)) // +2 for padding
+		if i < len(colWidths)-1 {
+			content.WriteString(cross)
+		}
+	}
+	content.WriteString(rightT + "\n")
 	
 	// Table rows with alternating styles
 	for i, category := range m.categories {
 		// Row number
-		content.WriteString(fmt.Sprintf("%-4d ", i+1))
+		content.WriteString(vertical + " ")
+		content.WriteString(rowNumStyle.Render(fmt.Sprintf("%-3d", i+1)))
+		content.WriteString(" " + vertical + " ")
 		
 		// Style based on even/odd row
 		var rowStyleToUse lipgloss.Style
 		if i%2 == 0 {
-			rowStyleToUse = rowStyle
-		} else {
 			rowStyleToUse = cellStyle
+		} else {
+			rowStyleToUse = altRowStyle
 		}
 		
 		// Format each cell with appropriate highlighting
@@ -1125,19 +1435,11 @@ func (m model) renderCategoriesTable() string {
 				cellText = fmt.Sprintf("%-*s", colWidths[j], category.Slug)
 			}
 			
-			// Add space after each cell except the last one
-			if j < 2 {
-				cellText += " "
-			}
-			
 			// Determine cell style (selected, editing, or normal)
 			if !m.focusLeft && m.cursorRow == i && m.cursorCol == j {
 				if m.editing {
 					// Editing mode - show edit buffer
 					cellText = fmt.Sprintf("%-*s", colWidths[j], m.editBuffer)
-					if j < 2 {
-						cellText += " "
-					}
 					content.WriteString(editingCellStyle.Render(cellText))
 				} else {
 					// Selected but not editing
@@ -1147,17 +1449,46 @@ func (m model) renderCategoriesTable() string {
 				// Normal cell
 				content.WriteString(rowStyleToUse.Render(cellText))
 			}
+			content.WriteString(" " + vertical + " ")
 		}
 		
 		content.WriteString("\n")
+		
+		// Draw row separator if not the last row
+		if i < len(m.categories)-1 {
+			content.WriteString(leftT)
+			content.WriteString(strings.Repeat(horizontal, 5)) // Width for row numbers
+			content.WriteString(cross)
+			for i, w := range colWidths {
+				content.WriteString(strings.Repeat(horizontal, w+2)) // +2 for padding
+				if i < len(colWidths)-1 {
+					content.WriteString(cross)
+				}
+			}
+			content.WriteString(rightT + "\n")
+		}
 	}
+	
+	// Draw bottom border
+	content.WriteString(bottomLeft)
+	content.WriteString(strings.Repeat(horizontal, 5)) // Width for row numbers
+	content.WriteString(bottomT)
+	for i, w := range colWidths {
+		content.WriteString(strings.Repeat(horizontal, w+2)) // +2 for padding
+		if i < len(colWidths)-1 {
+			content.WriteString(bottomT)
+		}
+	}
+	content.WriteString(bottomRight + "\n")
 	
 	// Show editing help if enabled
 	if m.showEditHelp && !m.focusLeft {
+		helpStyle := lipgloss.NewStyle().Italic(true).Foreground(lipgloss.Color("#999999"))
 		content.WriteString("\n")
-		content.WriteString("Navigation: ↑/↓/←/→ or j/k/h/l | Edit: e or Enter | Cancel: Esc\n")
+		content.WriteString(helpStyle.Render("Navigation: ↑/↓/←/→ or j/k/h/l | Edit: e or Enter | Cancel: Esc"))
 		if m.editing {
-			content.WriteString("Editing: Type to modify | Submit: Enter | Cancel: Esc\n")
+			content.WriteString("\n")
+			content.WriteString(helpStyle.Render("Editing: Type to modify | Submit: Enter | Cancel: Esc"))
 		}
 	}
 	
