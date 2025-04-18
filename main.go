@@ -33,6 +33,10 @@ type AppModel struct {
 	width          int
 	height         int
 	focusLeft      bool
+	
+	// Scroll state
+	sidebarScroll  int
+	mainScroll     int
 
 	// Editing state
 	editing       bool
@@ -317,16 +321,91 @@ func (m *AppModel) handleLeftPanelKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		if m.selectedIdx > 0 {
 			m.selectedIdx--
+			
+			// Adjust scroll position if selection moves out of view
+			if m.selectedIdx < m.sidebarScroll {
+				m.sidebarScroll = m.selectedIdx
+			}
 		}
 		return m, nil
 	case "down", "j":
 		if m.selectedIdx < len(m.tables)-1 {
 			m.selectedIdx++
+			
+			// Calculate visible height (approximate based on main height minus borders)
+			visibleHeight := m.styles.SidebarStyle.GetHeight() - 2
+			
+			// Adjust scroll position if selection moves out of view
+			if m.selectedIdx >= m.sidebarScroll+visibleHeight {
+				m.sidebarScroll = m.selectedIdx - visibleHeight + 1
+			}
 		}
 		return m, nil
 	case "enter":
 		// Activate the selected table
 		m.activeTableIdx = m.selectedIdx
+		// Reset main content scroll when changing tables
+		m.mainScroll = 0
+		m.cursorRow = 0
+		m.cursorCol = 0
+		return m, nil
+	case "pgup":
+		// Page up - scroll up by visible height
+		visibleHeight := m.styles.SidebarStyle.GetHeight() - 2
+		m.sidebarScroll -= visibleHeight
+		if m.sidebarScroll < 0 {
+			m.sidebarScroll = 0
+		}
+		
+		// Also move selection if it's now out of view
+		if m.selectedIdx >= m.sidebarScroll+visibleHeight {
+			m.selectedIdx = m.sidebarScroll + visibleHeight - 1
+		} else if m.selectedIdx < m.sidebarScroll {
+			m.selectedIdx = m.sidebarScroll
+		}
+		return m, nil
+	case "pgdown":
+		// Page down - scroll down by visible height
+		visibleHeight := m.styles.SidebarStyle.GetHeight() - 2
+		maxScroll := len(m.tables) - visibleHeight
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		
+		m.sidebarScroll += visibleHeight
+		if m.sidebarScroll > maxScroll {
+			m.sidebarScroll = maxScroll
+		}
+		
+		// Also move selection if it's now out of view
+		if m.selectedIdx < m.sidebarScroll {
+			m.selectedIdx = m.sidebarScroll
+		} else if m.selectedIdx >= m.sidebarScroll+visibleHeight {
+			m.selectedIdx = m.sidebarScroll + visibleHeight - 1
+			if m.selectedIdx >= len(m.tables) {
+				m.selectedIdx = len(m.tables) - 1
+			}
+		}
+		return m, nil
+	case "home":
+		// Scroll to top
+		m.sidebarScroll = 0
+		if m.selectedIdx < m.sidebarScroll {
+			m.selectedIdx = m.sidebarScroll
+		}
+		return m, nil
+	case "end":
+		// Scroll to bottom
+		visibleHeight := m.styles.SidebarStyle.GetHeight() - 2
+		maxScroll := len(m.tables) - visibleHeight
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		m.sidebarScroll = maxScroll
+		
+		if m.selectedIdx < m.sidebarScroll {
+			m.selectedIdx = m.sidebarScroll
+		}
 		return m, nil
 	}
 	
@@ -339,12 +418,79 @@ func (m *AppModel) handleRightPanelKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "d":
 		m.mode = model.DataMode
+		m.mainScroll = 0 // Reset scroll position when changing view
 		return m, nil
 	case "s":
 		m.mode = model.StructureMode
+		m.mainScroll = 0 // Reset scroll position when changing view
 		return m, nil
 	case "i":
 		m.mode = model.IndicesMode
+		m.mainScroll = 0 // Reset scroll position when changing view
+		return m, nil
+	}
+
+	// Common scrolling keys for all modes
+	switch msg.String() {
+	case "pgup":
+		// Page up - scroll up by visible height
+		visibleHeight := m.styles.MainBoxStyle.GetHeight() - 2
+		m.mainScroll -= visibleHeight
+		if m.mainScroll < 0 {
+			m.mainScroll = 0
+		}
+		return m, nil
+	case "pgdown":
+		var maxContent int
+		if m.activeTableIdx >= 0 && m.activeTableIdx < len(m.tables) {
+			table := m.tables[m.activeTableIdx]
+			// Determine content height based on mode
+			if m.mode == model.DataMode && m.tableData[table] != nil {
+				maxContent = len(m.tableData[table]) + 1 // +1 for header row
+			} else if m.mode == model.StructureMode && m.tableMetadata[table] != nil {
+				maxContent = len(m.tableMetadata[table]) + 2 // +2 for title and blank line
+			} else if m.mode == model.IndicesMode && m.tableIndices[table] != nil {
+				maxContent = len(m.tableIndices[table]) + 2 // +2 for title and blank line
+			}
+		}
+		
+		visibleHeight := m.styles.MainBoxStyle.GetHeight() - 2
+		m.mainScroll += visibleHeight
+		
+		// Calculate max scroll position
+		maxScroll := maxContent - visibleHeight
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		
+		if m.mainScroll > maxScroll {
+			m.mainScroll = maxScroll
+		}
+		return m, nil
+	case "home":
+		m.mainScroll = 0
+		return m, nil
+	case "end":
+		var maxContent int
+		if m.activeTableIdx >= 0 && m.activeTableIdx < len(m.tables) {
+			table := m.tables[m.activeTableIdx]
+			// Determine content height based on mode
+			if m.mode == model.DataMode && m.tableData[table] != nil {
+				maxContent = len(m.tableData[table]) + 1 // +1 for header row
+			} else if m.mode == model.StructureMode && m.tableMetadata[table] != nil {
+				maxContent = len(m.tableMetadata[table]) + 2 // +2 for title and blank line
+			} else if m.mode == model.IndicesMode && m.tableIndices[table] != nil {
+				maxContent = len(m.tableIndices[table]) + 2 // +2 for title and blank line
+			}
+		}
+		
+		visibleHeight := m.styles.MainBoxStyle.GetHeight() - 2
+		maxScroll := maxContent - visibleHeight
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		
+		m.mainScroll = maxScroll
 		return m, nil
 	}
 
@@ -354,6 +500,11 @@ func (m *AppModel) handleRightPanelKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.cursorRow > 0 {
 				m.cursorRow--
+				
+				// Adjust scroll if cursor moves out of view
+				if m.cursorRow < m.mainScroll {
+					m.mainScroll = m.cursorRow
+				}
 			}
 			return m, nil
 		case "down", "j":
@@ -368,6 +519,14 @@ func (m *AppModel) handleRightPanelKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			
 			if m.cursorRow < maxRows-1 {
 				m.cursorRow++
+				
+				// Calculate visible height (approximate based on main height minus borders and header)
+				visibleHeight := m.styles.MainBoxStyle.GetHeight() - 3
+				
+				// Adjust scroll if cursor moves out of view
+				if m.cursorRow >= m.mainScroll+visibleHeight {
+					m.mainScroll = m.cursorRow - visibleHeight + 1
+				}
 			}
 			return m, nil
 		case "left", "h":
@@ -557,7 +716,7 @@ func (m AppModel) View() string {
 	mainBoxWidth := m.width - sidebarWidth - 4 // Account for borders
 
 	// Render table list sidebar
-	sidebarView := ui.RenderTableList(styles, m.tables, m.selectedIdx, m.activeTableIdx)
+	sidebarView := ui.RenderTableList(styles, m.tables, m.selectedIdx, m.activeTableIdx, m.sidebarScroll)
 
 	// Render main content based on the selected table and mode
 	var mainContent string
@@ -580,13 +739,14 @@ func (m AppModel) View() string {
 				m.focusLeft,
 				m.editing,
 				m.editBuffer,
+				m.mainScroll,
 			)
 		} else if m.mode == model.StructureMode {
 			// Display table structure
-			mainContent = ui.RenderTableStructure(activeTable, m.tableMetadata[activeTable])
+			mainContent = ui.RenderTableStructure(activeTable, m.tableMetadata[activeTable], m.mainScroll)
 		} else if m.mode == model.IndicesMode {
 			// Display indices information
-			mainContent = ui.RenderTableIndices(activeTable, m.tableIndices[activeTable])
+			mainContent = ui.RenderTableIndices(activeTable, m.tableIndices[activeTable], m.mainScroll)
 		}
 	}
 	
@@ -627,6 +787,8 @@ func (m AppModel) View() string {
 		
 		doc.WriteString("\n")
 		doc.WriteString(helpStyle.Render("Navigation: ↑/↓/←/→ or j/k/h/l | Edit: e or Enter | Cancel: Esc"))
+		doc.WriteString("\n")
+		doc.WriteString(helpStyle.Render("Scroll: PgUp/PgDn/Home/End"))
 		if m.editing {
 			doc.WriteString("\n")
 			doc.WriteString(helpStyle.Render("Editing: Type to modify | Submit: Enter | Cancel: Esc"))

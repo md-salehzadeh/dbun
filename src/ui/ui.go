@@ -95,10 +95,13 @@ func NewStyles(width, height int) Styles {
 			Width(sidebarWidth).
 			Height(mainHeight).
 			Border(lipgloss.RoundedBorder()).
+			BorderForeground(inactiveBorderColor).
+			Padding(0, 1).
+			MarginRight(1).
 			Align(lipgloss.Left),
 
 		SelectedItemStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FF00FF")),
+			Foreground(lipgloss.Color("#FF00FF")), // Magenta
 		ActiveItemStyle: lipgloss.NewStyle().
 			Background(lipgloss.Color("#444444")).
 			Foreground(lipgloss.Color("#FFFFFF")),
@@ -109,6 +112,8 @@ func NewStyles(width, height int) Styles {
 			Width(mainBoxWidth).
 			Height(mainHeight).
 			Border(lipgloss.RoundedBorder()).
+			BorderForeground(inactiveBorderColor).
+			Padding(0, 1).
 			Align(lipgloss.Left),
 
 		// Tabs
@@ -151,7 +156,7 @@ func NewStyles(width, height int) Styles {
 		RowNumStyle: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#888888")).
 			Padding(0, 1).
-			Width(3).
+			Width(4).
 			Align(lipgloss.Right),
 
 		TableBorders: borders,
@@ -221,29 +226,102 @@ func (s Styles) UpdateStyles(focusLeft bool, mode model.ViewMode) Styles {
 }
 
 // RenderTableList renders the list of tables with selection indicators
-func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx int) string {
-	var sidebar strings.Builder
-
-	for i, table := range tables {
-		var line string
+func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx int, scrollPosition int) string {
+	// Calculate how many items we can show based on sidebar height
+	maxVisibleItems := styles.SidebarStyle.GetHeight() - 6 // Account for borders, title, and scroll indicators
+	if maxVisibleItems < 1 {
+		maxVisibleItems = 1
+	}
+	
+	// Calculate which portion of the list to show
+	endIdx := scrollPosition + maxVisibleItems
+	if endIdx > len(tables) {
+		endIdx = len(tables)
+	}
+	
+	// Prepare content with proper spacing and alignment
+	var content strings.Builder
+	
+	// Add title
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Background(lipgloss.Color("#6A0DAD")). // Purple color for title
+		Width(styles.SidebarStyle.GetWidth() - 4). // Account for border padding
+		Align(lipgloss.Center)
+	
+	content.WriteString(titleStyle.Render("TABLES"))
+	content.WriteString("\n")
+	
+	// Add scroll indicator if needed
+	if scrollPosition > 0 {
+		indicatorStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#AAAAAA")).
+			Align(lipgloss.Center).
+			Width(styles.SidebarStyle.GetWidth() - 4)
+		
+		content.WriteString(indicatorStyle.Render("↑ Previous"))
+		content.WriteString("\n")
+	}
+	
+	// Show visible table entries
+	for i := scrollPosition; i < endIdx; i++ {
+		var lineStyle lipgloss.Style
 		cursor := " " // Default cursor
-
+		
 		if selectedIdx == i && activeTableIdx == i {
-			cursor = ">"
-			line = styles.ActiveItemStyle.Render(fmt.Sprintf("%s %s", cursor, table))
+			cursor = "●"
+			lineStyle = styles.ActiveItemStyle.Copy().Bold(true).
+				Width(styles.SidebarStyle.GetWidth() - 6) // Account for border and cursor
 		} else if selectedIdx == i {
 			cursor = ">"
-			line = styles.SelectedItemStyle.Render(fmt.Sprintf("%s %s", cursor, table))
+			lineStyle = styles.SelectedItemStyle.Copy().Bold(true).
+				Width(styles.SidebarStyle.GetWidth() - 6)
 		} else if activeTableIdx == i {
-			line = styles.ActiveItemStyle.Render(fmt.Sprintf("%s %s", cursor, table))
+			cursor = " "
+			lineStyle = styles.ActiveItemStyle.Copy().
+				Width(styles.SidebarStyle.GetWidth() - 6)
 		} else {
-			line = styles.NormalItemStyle.Render(fmt.Sprintf("%s %s", cursor, table))
+			cursor = " "
+			lineStyle = styles.NormalItemStyle.Copy().
+				Width(styles.SidebarStyle.GetWidth() - 6)
 		}
-
-		sidebar.WriteString(line + "\n")
+		
+		// Create a fixed-width table name
+		tableName := tables[i]
+		if len(tableName) > styles.SidebarStyle.GetWidth() - 8 {
+			tableName = model.TruncateWithEllipsis(tableName, styles.SidebarStyle.GetWidth() - 8)
+		}
+		
+		content.WriteString(fmt.Sprintf("%s %s\n", cursor, lineStyle.Render(tableName)))
 	}
-
-	return styles.SidebarStyle.Render(sidebar.String())
+	
+	// Add scroll indicator if there are more items below
+	if endIdx < len(tables) {
+		indicatorStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#AAAAAA")).
+			Align(lipgloss.Center).
+			Width(styles.SidebarStyle.GetWidth() - 4)
+		
+		content.WriteString(indicatorStyle.Render("↓ More"))
+	}
+	
+	// Add pagination info
+	if len(tables) > maxVisibleItems {
+		paginationStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#999999")).
+			Align(lipgloss.Center).
+			Width(styles.SidebarStyle.GetWidth() - 4)
+		
+		paginationText := fmt.Sprintf("%d-%d of %d", 
+			scrollPosition+1, 
+			min(scrollPosition+maxVisibleItems, len(tables)), 
+			len(tables))
+		content.WriteString("\n")
+		content.WriteString(paginationStyle.Render(paginationText))
+	}
+	
+	return styles.SidebarStyle.Render(content.String())
 }
 
 // RenderStatusBar renders the application status bar
@@ -375,7 +453,7 @@ func RenderTable(styles Styles, mainBoxWidth int,
 	}
 	
 	// Add row number header
-	rowNumHeader := styles.HeaderStyle.Copy().Width(3).Render("#")
+	rowNumHeader := styles.HeaderStyle.Copy().Width(4).Render("#")
 	headerRow := lipgloss.JoinHorizontal(lipgloss.Top, rowNumHeader, lipgloss.JoinHorizontal(lipgloss.Top, headerCells...))
 	
 	// Render data rows
@@ -408,8 +486,8 @@ func RenderTable(styles Styles, mainBoxWidth int,
 			cells[j] = styleToUse.Copy().Width(colWidths[j]).Render(cellContent)
 		}
 		
-		// Add row number
-		rowNum := styles.RowNumStyle.Copy().Render(fmt.Sprintf("%d", i+1))
+		// Add row number with consistent width
+		rowNum := styles.RowNumStyle.Copy().Width(4).Render(fmt.Sprintf("%d", i+1))
 		dataRows[i] = lipgloss.JoinHorizontal(lipgloss.Top, rowNum, lipgloss.JoinHorizontal(lipgloss.Top, cells...))
 	}
 	
@@ -418,22 +496,31 @@ func RenderTable(styles Styles, mainBoxWidth int,
 		BorderStyle(styles.TableBorders).
 		BorderForeground(lipgloss.Color("#555555"))
 	
-	tableContent := lipgloss.JoinVertical(lipgloss.Left, append([]string{headerRow}, dataRows...)...)
-	table := tableStyle.Render(tableContent)
-	
-	sb.WriteString(table)
+	// Add the table content
+	if len(dataRows) > 0 {
+		tableContent := lipgloss.JoinVertical(lipgloss.Left, append([]string{headerRow}, dataRows...)...)
+		table := tableStyle.Render(tableContent)
+		sb.WriteString(table)
+	} else {
+		// Handle empty data set with just headers
+		tableContent := headerRow
+		table := tableStyle.Render(tableContent)
+		sb.WriteString(table)
+		sb.WriteString("\nNo data to display")
+	}
 	
 	return sb.String()
 }
 
-// RenderTableData formats table data into a displayable format
+// RenderTableData formats table data into a displayable format with scrolling
 func RenderTableData(styles Styles, mainBoxWidth int, 
                      tableName string, 
                      metadata []model.ColumnMetadata, 
                      data []model.RowData,
                      cursorRow, cursorCol int, 
                      focusLeft, editing bool,
-                     editBuffer string) string {
+                     editBuffer string,
+                     scrollPosition int) string {
 	
 	if len(metadata) == 0 || len(data) == 0 {
 		return fmt.Sprintf("No data available for table: %s", tableName)
@@ -486,9 +573,30 @@ func RenderTableData(styles Styles, mainBoxWidth int,
 		}
 	}
 	
-	// Prepare data rows
-	rows := make([][]string, len(data))
-	for i, row := range data {
+	// Calculate how many rows we can show based on main box height
+	maxVisibleRows := styles.MainBoxStyle.GetHeight() - 8 // Account for borders, header, title, and footer
+	if maxVisibleRows < 1 {
+		maxVisibleRows = 1
+	}
+	
+	// Apply scrolling - only show visible rows
+	visibleData := data
+	if scrollPosition >= 0 && len(data) > maxVisibleRows {
+		endPos := scrollPosition + maxVisibleRows
+		if endPos > len(data) {
+			endPos = len(data)
+		}
+		
+		if scrollPosition < len(data) {
+			visibleData = data[scrollPosition:endPos]
+		} else {
+			visibleData = []model.RowData{}
+		}
+	}
+	
+	// Prepare data rows for visible data
+	rows := make([][]string, len(visibleData))
+	for i, row := range visibleData {
 		rows[i] = make([]string, len(headers))
 		
 		for j, col := range metadata {
@@ -520,48 +628,355 @@ func RenderTableData(styles Styles, mainBoxWidth int,
 		}
 	}
 	
-	return RenderTable(styles, mainBoxWidth, headers, rows, minColWidths, idealColWidths, 
-	                   cursorRow, cursorCol, focusLeft, editing, editBuffer)
+	// Adjust cursor row for scrolling when rendering
+	adjustedCursorRow := cursorRow - scrollPosition
+	if adjustedCursorRow < 0 {
+		adjustedCursorRow = 0
+	}
+	if adjustedCursorRow >= len(rows) {
+		adjustedCursorRow = len(rows) - 1
+		if adjustedCursorRow < 0 {
+			adjustedCursorRow = 0
+		}
+	}
+	
+	// Construct output
+	var sb strings.Builder
+	
+	// Add table name as title
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Background(lipgloss.Color("#1E90FF")).
+		Padding(0, 1).
+		Align(lipgloss.Center).
+		Width(mainBoxWidth - 4)
+		
+	sb.WriteString(titleStyle.Render(tableName))
+	sb.WriteString("\n\n")
+	
+	// Render the table with scroll adjustment
+	table := RenderTable(styles, mainBoxWidth - 4, headers, rows, 
+		minColWidths, idealColWidths, 
+		adjustedCursorRow, cursorCol, 
+		focusLeft, editing, editBuffer)
+	
+	sb.WriteString(table)
+	sb.WriteString("\n")
+	
+	// Add scroll info footer
+	scrollInfoStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#AAAAAA")).
+		Align(lipgloss.Left).
+		PaddingTop(1)
+	
+	totalRows := len(data)
+	currentStart := scrollPosition + 1
+	currentEnd := scrollPosition + len(visibleData)
+	
+	var scrollInfo string
+	if totalRows > maxVisibleRows {
+		var indicators []string
+		
+		// Add "Previous" indicator if needed
+		if scrollPosition > 0 {
+			indicators = append(indicators, "↑ Previous")
+		}
+		
+		// Add "More" indicator if needed
+		if currentEnd < totalRows {
+			indicators = append(indicators, "↓ More")
+		}
+		
+		// Create pagination info
+		paginationInfo := fmt.Sprintf("Rows %d-%d of %d", currentStart, currentEnd, totalRows)
+		
+		if len(indicators) > 0 {
+			scrollInfo = strings.Join(indicators, " | ") + "   " + paginationInfo
+		} else {
+			scrollInfo = paginationInfo
+		}
+	}
+	
+	if scrollInfo != "" {
+		sb.WriteString(scrollInfoStyle.Render(scrollInfo))
+	}
+	
+	return sb.String()
 }
 
-// RenderTableStructure renders a table's structure information
-func RenderTableStructure(tableName string, metadata []model.ColumnMetadata) string {
+// RenderTableStructure renders a table's structure information with scrolling
+func RenderTableStructure(tableName string, metadata []model.ColumnMetadata, scrollPosition int) string {
 	if len(metadata) == 0 {
 		return fmt.Sprintf("No metadata available for table: %s", tableName)
 	}
 	
+	// Prepare content
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%s Structure:\n\n", tableName))
 	
-	for _, col := range metadata {
+	// Add title with consistent styling
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Background(lipgloss.Color("#1E90FF")).
+		Padding(0, 1).
+		Align(lipgloss.Center)
+		
+	sb.WriteString(titleStyle.Render(tableName))
+	sb.WriteString("\n\n")
+	
+	// Style for column names
+	colNameStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#AACCFF"))
+		
+	// Style for types
+	typeStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF"))
+		
+	// Style for constraints
+	constraintStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFCCAA"))
+		
+	// Style for keys
+	keyStyle := lipgloss.NewStyle().
+		Italic(true).
+		Foreground(lipgloss.Color("#AAFFAA"))
+	
+	// Calculate visible rows based on reasonable estimate
+	visibleMetadata := metadata
+	maxVisibleRows := 20 // Approximate - could refine based on box height
+	
+	if scrollPosition >= 0 && len(metadata) > maxVisibleRows {
+		endPos := scrollPosition + maxVisibleRows
+		if endPos > len(metadata) {
+			endPos = len(metadata)
+		}
+		
+		if scrollPosition < len(metadata) {
+			visibleMetadata = metadata[scrollPosition:endPos]
+		} else {
+			visibleMetadata = []model.ColumnMetadata{}
+		}
+	}
+	
+	// Add scroll indicators with consistent styling
+	if scrollPosition > 0 {
+		indicatorStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#AAAAAA")).
+			Align(lipgloss.Center)
+			
+		sb.WriteString(indicatorStyle.Render("↑ Previous columns"))
+		sb.WriteString("\n\n")
+	}
+	
+	// Structure table header
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Background(lipgloss.Color("#333366"))
+		
+	sb.WriteString(headerStyle.Render(" Column Name       Type                    Constraints     Key "))
+	sb.WriteString("\n")
+	sb.WriteString(headerStyle.Render("─────────────────────────────────────────────────────────────"))
+	sb.WriteString("\n")
+	
+	// Show the column details
+	for i, col := range visibleMetadata {
+		// Background color for alternating rows
+		rowStyle := lipgloss.NewStyle()
+		if i%2 == 1 {
+			rowStyle = rowStyle.Background(lipgloss.Color("#222233"))
+		}
+		
 		nullableStr := "NOT NULL"
 		if col.Nullable {
 			nullableStr = "NULL"
 		}
 		
-		keyStr := ""
-		if col.Key != "" {
-			keyStr = fmt.Sprintf(" (%s)", col.Key)
+		keyStr := col.Key
+		if keyStr == "" {
+			keyStr = "-"
 		}
 		
-		sb.WriteString(fmt.Sprintf("%s: %s %s%s\n", col.Name, col.Type, nullableStr, keyStr))
+		// Format each field with padding to align columns
+		colNameText := rowStyle.Render(" " + colNameStyle.Render(model.TruncateWithEllipsis(col.Name, 16)))
+		typeText := rowStyle.Render(" " + typeStyle.Render(model.TruncateWithEllipsis(col.Type, 22)))
+		nullText := rowStyle.Render(" " + constraintStyle.Render(model.TruncateWithEllipsis(nullableStr, 14)))
+		keyText := rowStyle.Render(" " + keyStyle.Render(model.TruncateWithEllipsis(keyStr, 3)) + " ")
+		
+		sb.WriteString(colNameText + typeText + nullText + keyText)
+		sb.WriteString("\n")
+	}
+	
+	// Add more indicator and pagination info
+	if scrollPosition + len(visibleMetadata) < len(metadata) {
+		indicatorStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#AAAAAA")).
+			Align(lipgloss.Center)
+			
+		sb.WriteString("\n")
+		sb.WriteString(indicatorStyle.Render("↓ More columns"))
+	}
+	
+	// Add scroll position indicator with nice styling
+	if len(metadata) > maxVisibleRows {
+		paginationStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#999999")).
+			Align(lipgloss.Right).
+			PaddingTop(1)
+			
+		paginationText := fmt.Sprintf("Columns %d-%d of %d", 
+			scrollPosition+1, 
+			scrollPosition+len(visibleMetadata), 
+			len(metadata))
+			
+		sb.WriteString("\n")
+		sb.WriteString(paginationStyle.Render(paginationText))
 	}
 	
 	return sb.String()
 }
 
-// RenderTableIndices renders a table's indices information
-func RenderTableIndices(tableName string, indices []string) string {
+// RenderTableIndices renders a table's indices information with scrolling
+func RenderTableIndices(tableName string, indices []string, scrollPosition int) string {
 	if len(indices) == 0 {
 		return fmt.Sprintf("No index information available for table: %s", tableName)
 	}
 	
+	// Prepare content
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%s Indices:\n\n", tableName))
 	
-	for _, idx := range indices {
-		sb.WriteString(fmt.Sprintf("Index: %s\n", idx))
+	// Add title with consistent styling
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Background(lipgloss.Color("#1E90FF")).
+		Padding(0, 1).
+		Align(lipgloss.Center)
+		
+	sb.WriteString(titleStyle.Render(tableName))
+	sb.WriteString("\n\n")
+	
+	// Calculate visible indices
+	visibleIndices := indices
+	maxVisibleRows := 20 // Approximate - could refine based on box height
+	
+	if scrollPosition >= 0 && len(indices) > maxVisibleRows {
+		endPos := scrollPosition + maxVisibleRows
+		if endPos > len(indices) {
+			endPos = len(indices)
+		}
+		
+		if scrollPosition < len(indices) {
+			visibleIndices = indices[scrollPosition:endPos]
+		} else {
+			visibleIndices = []string{}
+		}
+	}
+	
+	// Add scroll indicators with consistent styling
+	if scrollPosition > 0 {
+		indicatorStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#AAAAAA")).
+			Align(lipgloss.Center)
+			
+		sb.WriteString(indicatorStyle.Render("↑ Previous indices"))
+		sb.WriteString("\n\n")
+	}
+	
+	// Table header
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Background(lipgloss.Color("#333366"))
+		
+	sb.WriteString(headerStyle.Render(" Index Name                       Type        Columns                   "))
+	sb.WriteString("\n")
+	sb.WriteString(headerStyle.Render("─────────────────────────────────────────────────────────────────────"))
+	sb.WriteString("\n")
+	
+	// Index type and name styling
+	indexNameStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#AACCFF"))
+		
+	indexTypeStyle := lipgloss.NewStyle().
+		Italic(true).
+		Foreground(lipgloss.Color("#AAFFAA"))
+	
+	// For demo, we'll parse the index string to extract type and involved columns
+	// In a real scenario, you might have more structured index data
+	for i, idx := range visibleIndices {
+		// Background color for alternating rows
+		rowStyle := lipgloss.NewStyle()
+		if i%2 == 1 {
+			rowStyle = rowStyle.Background(lipgloss.Color("#222233"))
+		}
+		
+		// Extract index type (simple demo parsing)
+		indexName := idx
+		indexType := "INDEX"
+		
+		if strings.HasPrefix(strings.ToUpper(idx), "PRIMARY") {
+			indexType = "PRIMARY"
+		} else if strings.HasPrefix(strings.ToUpper(idx), "UNIQUE") {
+			indexType = "UNIQUE"
+		} else if strings.HasPrefix(strings.ToUpper(idx), "IDX_") || strings.HasPrefix(idx, "index_") {
+			indexType = "INDEX"
+		}
+		
+		// Extract columns (simplified - in real app you would have actual index metadata with columns)
+		columns := "N/A"
+		if strings.Contains(idx, "_") {
+			parts := strings.Split(idx, "_")
+			if len(parts) > 1 {
+				columns = strings.Join(parts[1:], ", ")
+			}
+		}
+		
+		// Format fields with proper alignment and styling
+		nameText := rowStyle.Render(" " + indexNameStyle.Render(model.TruncateWithEllipsis(indexName, 30)))
+		typeText := rowStyle.Render(" " + indexTypeStyle.Render(model.TruncateWithEllipsis(indexType, 10)))
+		columnsText := rowStyle.Render(" " + model.TruncateWithEllipsis(columns, 25) + " ")
+		
+		sb.WriteString(nameText + typeText + columnsText)
+		sb.WriteString("\n")
+	}
+	
+	// Add more indicator and pagination info
+	if scrollPosition + len(visibleIndices) < len(indices) {
+		indicatorStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#AAAAAA")).
+			Align(lipgloss.Center)
+			
+		sb.WriteString("\n")
+		sb.WriteString(indicatorStyle.Render("↓ More indices"))
+	}
+	
+	// Add scroll position indicator with nice styling
+	if len(indices) > maxVisibleRows {
+		paginationStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#999999")).
+			Align(lipgloss.Right).
+			PaddingTop(1)
+			
+		paginationText := fmt.Sprintf("Indices %d-%d of %d", 
+			scrollPosition+1, 
+			scrollPosition+len(visibleIndices), 
+			len(indices))
+			
+		sb.WriteString("\n")
+		sb.WriteString(paginationStyle.Render(paginationText))
 	}
 	
 	return sb.String()
+}
+
+// Helper function to find minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
