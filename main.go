@@ -1,16 +1,385 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
+	_ "github.com/go-sql-driver/mysql"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Sample data structures for tables
+// Database connection settings
+type DBConfig struct {
+	Host     string
+	Port     int
+	User     string
+	Password string
+	Database string
+}
+
+// Table metadata
+type TableMetadata struct {
+	Name    string
+	Columns []ColumnMetadata
+}
+
+// Column metadata
+type ColumnMetadata struct {
+	Name     string
+	Type     string
+	Nullable bool
+	Key      string
+}
+
+// Generic row data (for any table)
+type RowData map[string]interface{}
+
+// App model
+type model struct {
+	db             *sql.DB       // Database connection
+	dbConfig       DBConfig      // Database configuration
+	tables         []string      // List of tables
+	selectedIdx    int           // Currently selected table index
+	activeTableIdx int           // Currently active table index
+	mode           string        // Mode: "Data", "Structure", "Indices"
+	width          int           // Terminal width
+	height         int           // Terminal height
+	focusLeft      bool          // Focus on left (true) or right (false) box
+	
+	// Dynamic table data
+	tableData      map[string][]RowData       // Data for each table
+	tableMetadata  map[string][]ColumnMetadata // Metadata for each table
+	tableIndices   map[string][]string         // Indices for each table
+	
+	// Editing state
+	editing       bool   // Whether we're in editing mode
+	cursorRow     int    // Current cursor row in the table
+	cursorCol     int    // Current cursor column in the table
+	editBuffer    string // Buffer for the current edit
+	editingField  string // Name of the field being edited
+	showEditHelp  bool   // Whether to show editing help
+	
+	// Connection state
+	connected     bool   // Whether connected to database
+	errorMsg      string // Error message if any
+}
+
+// Initialize the database connection
+func initDB(config DBConfig) (*sql.DB, error) {
+	// Format DSN (Data Source Name)
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true", 
+		config.User, config.Password, config.Host, config.Port, config.Database)
+	
+	fmt.Printf("DSN: %s\n", dsn)
+	
+	// Open connection
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("error connecting to database: %v", err)
+	}
+	
+	// Test the connection
+	err = db.Ping()
+	if err != nil {
+		return nil, fmt.Errorf("error pinging database: %v", err)
+	}
+	
+	return db, nil
+}
+
+// Fetches all table names from the database
+func fetchTableNames(db *sql.DB) ([]string, error) {
+	query := "SHOW TABLES"
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching tables: %v", err)
+	}
+	defer rows.Close()
+	
+	var tables []string
+	for rows.Next() {
+		var tableName string
+		if err := rows.Scan(&tableName); err != nil {
+			return nil, fmt.Errorf("error scanning table name: %v", err)
+		}
+		tables = append(tables, tableName)
+	}
+	
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating tables: %v", err)
+	}
+	
+	return tables, nil
+}
+
+// Fetches column metadata for a specific table
+func fetchTableMetadata(db *sql.DB, tableName string) ([]ColumnMetadata, error) {
+	query := fmt.Sprintf("DESCRIBE %s", tableName)
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching table metadata: %v", err)
+	}
+	defer rows.Close()
+	
+	var columns []ColumnMetadata
+	for rows.Next() {
+		var field, dataType, null, key, defaultVal, extra sql.NullString
+		if err := rows.Scan(&field, &dataType, &null, &key, &defaultVal, &extra); err != nil {
+			return nil, fmt.Errorf("error scanning column metadata: %v", err)
+		}
+		
+		column := ColumnMetadata{
+			Name: field.String,
+			Type: dataType.String,
+			Nullable: null.String == "YES",
+			Key: key.String,
+		}
+		columns = append(columns, column)
+	}
+	
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating columns: %v", err)
+	}
+	
+	return columns, nil
+}
+
+// Fetches indices for a specific table
+func fetchTableIndices(db *sql.DB, tableName string) ([]string, error) {
+	query := fmt.Sprintf("SHOW INDEX FROM %s", tableName)
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching table indices: %v", err)
+	}
+	defer rows.Close()
+	
+	// Get column names from result set
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("error getting index columns: %v", err)
+	}
+	
+	// Create a slice of interface{} to hold the values
+	values := make([]interface{}, len(columns))
+	scanArgs := make([]interface{}, len(columns))
+	for i := range values {
+		scanArgs[i] = &values[i]
+	}
+	
+	indexMap := make(map[string]bool) // Use map to avoid duplicates
+	
+	// For each row, scan all columns
+	for rows.Next() {
+		err := rows.Scan(scanArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("error scanning index data: %v", err)
+		}
+		
+		// Extract the key name (usually in position 2)
+		keyNameIdx := 2 // Default position for key_name
+		
+		// Find the key_name column position for flexibility
+		for i, colName := range columns {
+			if strings.EqualFold(colName, "Key_name") {
+				keyNameIdx = i
+				break
+			}
+		}
+		
+		// Get the key name if it exists and is not null
+		if keyNameIdx < len(values) && values[keyNameIdx] != nil {
+			switch v := values[keyNameIdx].(type) {
+			case []byte:
+				indexMap[string(v)] = true
+			case string:
+				indexMap[v] = true
+			}
+		}
+	}
+	
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating indices: %v", err)
+	}
+	
+	// Convert map keys to slice
+	indices := make([]string, 0, len(indexMap))
+	for key := range indexMap {
+		indices = append(indices, key)
+	}
+	
+	return indices, nil
+}
+
+// Fetches data for a specific table (limited to a reasonable number of rows)
+func fetchTableData(db *sql.DB, tableName string, limit int) ([]RowData, error) {
+	// Get columns first to handle the results properly
+	columns, err := fetchTableMetadata(db, tableName)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Build query with column names with proper backtick escaping for MySQL
+	columnNames := make([]string, len(columns))
+	for i, col := range columns {
+		// Escape column names with backticks to handle reserved words and special characters
+		columnNames[i] = fmt.Sprintf("`%s`", col.Name)
+	}
+	
+	query := fmt.Sprintf("SELECT %s FROM `%s` LIMIT %d", 
+		strings.Join(columnNames, ", "), tableName, limit)
+	
+	fmt.Printf("Running query: %s\n", query)
+	
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching data: %v", err)
+	}
+	defer rows.Close()
+	
+	// Get column types to properly handle NULL values
+	colTypes, err := rows.ColumnTypes()
+	if err != nil {
+		return nil, fmt.Errorf("error getting column types: %v", err)
+	}
+	
+	var result []RowData
+	
+	// For each row
+	for rows.Next() {
+		// Create a slice of interface{} to hold the values
+		values := make([]interface{}, len(columnNames))
+		// Create a slice of pointers to the values
+		scanArgs := make([]interface{}, len(columnNames))
+		for i := range values {
+			scanArgs[i] = &values[i]
+		}
+		
+		// Scan the row into the slice of interface{}
+		if err := rows.Scan(scanArgs...); err != nil {
+			return nil, fmt.Errorf("error scanning row: %v", err)
+		}
+		
+		// Create a map to hold the row data
+		rowData := make(RowData)
+		
+		// For each column in the row
+		for i, col := range columns {
+			colName := col.Name
+			
+			// Handle different types
+			var v interface{}
+			val := values[i]
+			
+			// Handle NULL values
+			if val == nil {
+				v = nil
+			} else {
+				// Handle different types based on the column type
+				switch colTypes[i].DatabaseTypeName() {
+				case "INT", "TINYINT", "SMALLINT", "MEDIUMINT", "BIGINT":
+					switch val.(type) {
+					case []byte:
+						v, _ = strconv.Atoi(string(val.([]byte)))
+					default:
+						v = val
+					}
+				case "DECIMAL", "FLOAT", "DOUBLE":
+					switch val.(type) {
+					case []byte:
+						v, _ = strconv.ParseFloat(string(val.([]byte)), 64)
+					default:
+						v = val
+					}
+				default:
+					// For TEXT, VARCHAR, etc. convert []byte to string
+					switch val.(type) {
+					case []byte:
+						v = string(val.([]byte))
+					default:
+						v = val
+					}
+				}
+			}
+			
+			rowData[colName] = v
+		}
+		
+		result = append(result, rowData)
+	}
+	
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating rows: %v", err)
+	}
+	
+	return result, nil
+}
+
+// Initialize the model with database connection and data
+func initModel(dbConfig DBConfig) (model, error) {
+	m := model{
+		dbConfig:      dbConfig,
+		tables:        []string{},
+		selectedIdx:   0,
+		activeTableIdx: 0,
+		mode:          "Data",
+		width:         80,
+		height:        24,
+		focusLeft:     true,
+		tableData:     make(map[string][]RowData),
+		tableMetadata: make(map[string][]ColumnMetadata),
+		tableIndices:  make(map[string][]string),
+		connected:     false,
+	}
+	
+	// Connect to database
+	db, err := initDB(dbConfig)
+	if err != nil {
+		return m, err
+	}
+	
+	m.db = db
+	m.connected = true
+	
+	// Fetch table names
+	tables, err := fetchTableNames(db)
+	if err != nil {
+		return m, err
+	}
+	
+	m.tables = tables
+	
+	// Pre-fetch metadata for all tables
+	for _, table := range tables {
+		// Fetch metadata
+		metadata, err := fetchTableMetadata(db, table)
+		if err != nil {
+			return m, err
+		}
+		m.tableMetadata[table] = metadata
+		
+		// Fetch indices
+		indices, err := fetchTableIndices(db, table)
+		if err != nil {
+			return m, err
+		}
+		m.tableIndices[table] = indices
+		
+		// Fetch data (limited to 100 rows per table)
+		data, err := fetchTableData(db, table, 100)
+		if err != nil {
+			return m, err
+		}
+		m.tableData[table] = data
+	}
+	
+	return m, nil
+}
+
+// Sample data structures (kept for reference/fallback)
 type User struct {
 	ID       int
 	Username string
@@ -38,31 +407,7 @@ type Category struct {
 	Slug string
 }
 
-type model struct {
-	tables         []string // List of tables
-	selectedIdx    int      // Currently selected table index
-	activeTableIdx int      // Currently active table index
-	mode           string   // Mode: "Data", "Structure", "Indices"
-	width          int      // Terminal width
-	height         int      // Terminal height
-	focusLeft      bool     // Focus on left (true) or right (false) box
-	
-	// Sample data for each table
-	users      []User
-	orders     []Order
-	products   []Product
-	categories []Category
-	
-	// Editing state
-	editing       bool   // Whether we're in editing mode
-	cursorRow     int    // Current cursor row in the table
-	cursorCol     int    // Current cursor column in the table
-	editBuffer    string // Buffer for the current edit
-	editingField  string // Name of the field being edited
-	showEditHelp  bool   // Whether to show editing help
-}
-
-// Initialize sample data for tables
+// Initialize sample data for tables - only used as fallback if database connection fails
 func initSampleData() ([]User, []Order, []Product, []Category) {
 	users := []User{
 		{ID: 1, Username: "johndoe", Email: "john@example.com", Active: true},
@@ -210,17 +555,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "down", "j":
 					// Max rows depends on the current table
 					var maxRows int
-					switch m.tables[m.activeTableIdx] {
-					case "users":
-						maxRows = len(m.users)
-					case "orders":
-						maxRows = len(m.orders)
-					case "products":
-						maxRows = len(m.products)
-					case "categories":
-						maxRows = len(m.categories)
-					default:
-						maxRows = 0
+					if m.activeTableIdx >= 0 && m.activeTableIdx < len(m.tables) {
+						table := m.tables[m.activeTableIdx]
+						if data, ok := m.tableData[table]; ok {
+							maxRows = len(data)
+						}
 					}
 					
 					if m.cursorRow < maxRows-1 {
@@ -235,17 +574,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "right", "l":
 					// Max columns depends on the current table
 					var maxCols int
-					switch m.tables[m.activeTableIdx] {
-					case "users":
-						maxCols = 4 // ID, Username, Email, Active
-					case "orders":
-						maxCols = 4 // ID, UserID, TotalPrice, Status
-					case "products":
-						maxCols = 4 // ID, Name, Price, Category
-					case "categories":
-						maxCols = 3 // ID, Name, Slug
-					default:
-						maxCols = 0
+					if m.activeTableIdx >= 0 && m.activeTableIdx < len(m.tables) {
+						table := m.tables[m.activeTableIdx]
+						if metadata, ok := m.tableMetadata[table]; ok {
+							maxCols = len(metadata)
+						}
 					}
 					
 					if m.cursorCol < maxCols-1 {
@@ -280,29 +613,15 @@ func (m *model) enterEditMode() tea.Model {
 
 // Gets the name of the current field being edited
 func (m *model) getCurrentFieldName() string {
+	if m.activeTableIdx < 0 || m.activeTableIdx >= len(m.tables) {
+		return ""
+	}
+	
 	table := m.tables[m.activeTableIdx]
 	
-	switch table {
-	case "users":
-		fields := []string{"ID", "Username", "Email", "Active"}
-		if m.cursorCol < len(fields) {
-			return fields[m.cursorCol]
-		}
-	case "orders":
-		fields := []string{"ID", "UserID", "TotalPrice", "Status"}
-		if m.cursorCol < len(fields) {
-			return fields[m.cursorCol]
-		}
-	case "products":
-		fields := []string{"ID", "Name", "Price", "Category"}
-		if m.cursorCol < len(fields) {
-			return fields[m.cursorCol]
-		}
-	case "categories":
-		fields := []string{"ID", "Name", "Slug"}
-		if m.cursorCol < len(fields) {
-			return fields[m.cursorCol]
-		}
+	// Get column names from metadata
+	if metadata, ok := m.tableMetadata[table]; ok && m.cursorCol < len(metadata) {
+		return metadata[m.cursorCol].Name
 	}
 	
 	return ""
@@ -310,64 +629,39 @@ func (m *model) getCurrentFieldName() string {
 
 // Gets the current value of the selected cell
 func (m *model) getCurrentCellValue() string {
+	if m.activeTableIdx < 0 || m.activeTableIdx >= len(m.tables) {
+		return ""
+	}
+	
 	table := m.tables[m.activeTableIdx]
 	
-	switch table {
-	case "users":
-		if m.cursorRow >= 0 && m.cursorRow < len(m.users) {
-			user := m.users[m.cursorRow]
-			switch m.cursorCol {
-			case 0:
-				return fmt.Sprintf("%d", user.ID)
-			case 1:
-				return user.Username
-			case 2:
-				return user.Email
-			case 3:
-				if user.Active {
-					return "Yes"
+	// Get value from tableData
+	if data, ok := m.tableData[table]; ok && m.cursorRow < len(data) {
+		row := data[m.cursorRow]
+		
+		// Get column name from metadata
+		if metadata, ok := m.tableMetadata[table]; ok && m.cursorCol < len(metadata) {
+			colName := metadata[m.cursorCol].Name
+			
+			// Format the value based on its type
+			if val, ok := row[colName]; ok {
+				if val == nil {
+					return "NULL"
 				}
-				return "No"
-			}
-		}
-	case "orders":
-		if m.cursorRow >= 0 && m.cursorRow < len(m.orders) {
-			order := m.orders[m.cursorRow]
-			switch m.cursorCol {
-			case 0:
-				return fmt.Sprintf("%d", order.ID)
-			case 1:
-				return fmt.Sprintf("%d", order.UserID)
-			case 2:
-				return fmt.Sprintf("%.2f", order.TotalPrice)
-			case 3:
-				return order.Status
-			}
-		}
-	case "products":
-		if m.cursorRow >= 0 && m.cursorRow < len(m.products) {
-			product := m.products[m.cursorRow]
-			switch m.cursorCol {
-			case 0:
-				return fmt.Sprintf("%d", product.ID)
-			case 1:
-				return product.Name
-			case 2:
-				return fmt.Sprintf("%.2f", product.Price)
-			case 3:
-				return product.Category
-			}
-		}
-	case "categories":
-		if m.cursorRow >= 0 && m.cursorRow < len(m.categories) {
-			category := m.categories[m.cursorRow]
-			switch m.cursorCol {
-			case 0:
-				return fmt.Sprintf("%d", category.ID)
-			case 1:
-				return category.Name
-			case 2:
-				return category.Slug
+				
+				switch v := val.(type) {
+				case bool:
+					if v {
+						return "Yes"
+					}
+					return "No"
+				case int, int8, int16, int32, int64:
+					return fmt.Sprintf("%d", v)
+				case float32, float64:
+					return fmt.Sprintf("%.2f", v)
+				default:
+					return fmt.Sprintf("%v", v)
+				}
 			}
 		}
 	}
@@ -377,95 +671,59 @@ func (m *model) getCurrentCellValue() string {
 
 // Apply the edit to the current cell
 func (m *model) applyEdit() {
+	if m.activeTableIdx < 0 || m.activeTableIdx >= len(m.tables) {
+		return
+	}
+	
 	table := m.tables[m.activeTableIdx]
 	
-	switch table {
-	case "users":
-		if m.cursorRow >= 0 && m.cursorRow < len(m.users) {
-			user := &m.users[m.cursorRow]
-			switch m.cursorCol {
-			case 0:
-				// ID: Parse int
-				if id, err := parseInt(m.editBuffer); err == nil {
-					user.ID = id
-				}
-			case 1:
-				// Username: String
-				user.Username = m.editBuffer
-			case 2:
-				// Email: String
-				user.Email = m.editBuffer
-			case 3:
-				// Active: Bool (Yes/No)
-				user.Active = m.editBuffer == "Yes" || m.editBuffer == "yes" || 
-				             m.editBuffer == "true" || m.editBuffer == "TRUE" || 
-				             m.editBuffer == "1"
+	// Get data and metadata
+	data, dataOk := m.tableData[table]
+	metadata, metaOk := m.tableMetadata[table]
+	
+	if !dataOk || !metaOk || m.cursorRow >= len(data) || m.cursorCol >= len(metadata) {
+		return
+	}
+	
+	colName := metadata[m.cursorCol].Name
+	colType := metadata[m.cursorCol].Type
+	
+	// Get the row
+	row := data[m.cursorRow]
+	
+	// Parse the edited value based on column type
+	var newValue interface{}
+	
+	// Handle NULL value
+	if m.editBuffer == "NULL" || m.editBuffer == "null" {
+		newValue = nil
+	} else {
+		// Parse based on data type
+		if strings.Contains(colType, "int") {
+			if val, err := parseInt(m.editBuffer); err == nil {
+				newValue = val
 			}
-		}
-	case "orders":
-		if m.cursorRow >= 0 && m.cursorRow < len(m.orders) {
-			order := &m.orders[m.cursorRow]
-			switch m.cursorCol {
-			case 0:
-				// ID: Parse int
-				if id, err := parseInt(m.editBuffer); err == nil {
-					order.ID = id
-				}
-			case 1:
-				// UserID: Parse int
-				if userID, err := parseInt(m.editBuffer); err == nil {
-					order.UserID = userID
-				}
-			case 2:
-				// TotalPrice: Parse float
-				if price, err := parseFloat(m.editBuffer); err == nil {
-					order.TotalPrice = price
-				}
-			case 3:
-				// Status: String
-				order.Status = m.editBuffer
+		} else if strings.Contains(colType, "float") || 
+				strings.Contains(colType, "double") || 
+				strings.Contains(colType, "decimal") {
+			if val, err := parseFloat(m.editBuffer); err == nil {
+				newValue = val
 			}
-		}
-	case "products":
-		if m.cursorRow >= 0 && m.cursorRow < len(m.products) {
-			product := &m.products[m.cursorRow]
-			switch m.cursorCol {
-			case 0:
-				// ID: Parse int
-				if id, err := parseInt(m.editBuffer); err == nil {
-					product.ID = id
-				}
-			case 1:
-				// Name: String
-				product.Name = m.editBuffer
-			case 2:
-				// Price: Parse float
-				if price, err := parseFloat(m.editBuffer); err == nil {
-					product.Price = price
-				}
-			case 3:
-				// Category: String
-				product.Category = m.editBuffer
-			}
-		}
-	case "categories":
-		if m.cursorRow >= 0 && m.cursorRow < len(m.categories) {
-			category := &m.categories[m.cursorRow]
-			switch m.cursorCol {
-			case 0:
-				// ID: Parse int
-				if id, err := parseInt(m.editBuffer); err == nil {
-					category.ID = id
-				}
-			case 1:
-				// Name: String
-				category.Name = m.editBuffer
-			case 2:
-				// Slug: String
-				category.Slug = m.editBuffer
-			}
+		} else if strings.Contains(colType, "bool") || 
+				strings.Contains(colType, "tinyint(1)") {
+			newValue = m.editBuffer == "Yes" || m.editBuffer == "yes" || 
+					  m.editBuffer == "true" || m.editBuffer == "TRUE" || 
+					  m.editBuffer == "1"
+		} else {
+			// Default to string for other types
+			newValue = m.editBuffer
 		}
 	}
+	
+	// Update the value in memory (not in the database)
+	row[colName] = newValue
+	data[m.cursorRow] = row
+	m.tableData[table] = data
 }
 
 // Helper function to parse int
@@ -479,6 +737,11 @@ func parseFloat(s string) (float64, error) {
 }
 
 func (m model) View() string {
+	// Check if connected to database
+	if (!m.connected) {
+		return fmt.Sprintf("Not connected to database: %s\nPress Ctrl+C to exit", m.errorMsg)
+	}
+
 	// Ensure we have valid dimensions
 	if m.width == 0 || m.height == 0 {
 		return "Loading..."
@@ -635,52 +898,24 @@ func (m model) View() string {
 
 	// Main Box: Show selected table data based on mode and selected table
 	var mainContent string
-	activeTable := m.tables[m.activeTableIdx]
 	
-	if m.mode == "Data" {
-		// Display table data based on the selected table
-		switch activeTable {
-		case "users":
-			mainContent = m.renderUsersTable()
-		case "orders":
-			mainContent = m.renderOrdersTable()
-		case "products":
-			mainContent = m.renderProductsTable()
-		case "categories":
-			mainContent = m.renderCategoriesTable()
-		default:
-			mainContent = "Unknown table selected"
-		}
-	} else if m.mode == "Structure" {
-		// Display table structure based on the selected table
-		switch activeTable {
-		case "users":
-			mainContent = "User Structure:\n\nID: int\nUsername: string\nEmail: string\nActive: bool"
-		case "orders":
-			mainContent = "Order Structure:\n\nID: int\nUserID: int\nTotalPrice: float64\nStatus: string"
-		case "products":
-			mainContent = "Product Structure:\n\nID: int\nName: string\nPrice: float64\nCategory: string"
-		case "categories":
-			mainContent = "Category Structure:\n\nID: int\nName: string\nSlug: string"
-		default:
-			mainContent = "Unknown table selected"
-		}
-	} else if m.mode == "Indices" {
-		// Display indices information based on the selected table
-		switch activeTable {
-		case "users":
-			mainContent = "User Indices:\n\nPrimary Key: ID\nIndex: Username (unique)\nIndex: Email (unique)"
-		case "orders":
-			mainContent = "Order Indices:\n\nPrimary Key: ID\nIndex: UserID"
-		case "products":
-			mainContent = "Product Indices:\n\nPrimary Key: ID\nIndex: Category"
-		case "categories":
-			mainContent = "Category Indices:\n\nPrimary Key: ID\nIndex: Slug (unique)"
-		default:
-			mainContent = "Unknown table selected"
-		}
+	if m.activeTableIdx < 0 || m.activeTableIdx >= len(m.tables) {
+		mainContent = "No table selected"
 	} else {
-		mainContent = fmt.Sprintf("Unknown mode: %s", m.mode)
+		activeTable := m.tables[m.activeTableIdx]
+		
+		if m.mode == "Data" {
+			// Display table data from database
+			mainContent = m.renderTableData(activeTable)
+		} else if m.mode == "Structure" {
+			// Display table structure from metadata
+			mainContent = m.renderTableStructure(activeTable)
+		} else if m.mode == "Indices" {
+			// Display indices information from metadata
+			mainContent = m.renderTableIndices(activeTable)
+		} else {
+			mainContent = fmt.Sprintf("Unknown mode: %s", m.mode)
+		}
 	}
 	
 	mainBoxView := mainBoxStyle.Render(mainContent)
@@ -734,6 +969,145 @@ func (m model) View() string {
 	return doc.String()
 }
 
+// Renders table data from the database
+func (m model) renderTableData(tableName string) string {
+	// Ensure we have metadata and data
+	metadata, metaOk := m.tableMetadata[tableName]
+	data, dataOk := m.tableData[tableName]
+	
+	if !metaOk || !dataOk {
+		return fmt.Sprintf("No data available for table: %s", tableName)
+	}
+	
+	// Define headers from metadata
+	headers := make([]string, len(metadata))
+	for i, col := range metadata {
+		headers[i] = strings.ToUpper(col.Name)
+	}
+	
+	// Define minimum and ideal column widths
+	// Use a reasonable default for all columns
+	minColWidths := make([]int, len(headers))
+	idealColWidths := make([]int, len(headers))
+	
+	for i, col := range metadata {
+		// Set minimum width based on header length
+		headerLen := len(col.Name)
+		if headerLen < 3 {
+			minColWidths[i] = 3
+		} else {
+			minColWidths[i] = headerLen
+		}
+		
+		// Set ideal width based on data type
+		if strings.Contains(col.Type, "int") {
+			idealColWidths[i] = 8
+		} else if strings.Contains(col.Type, "float") || 
+				strings.Contains(col.Type, "double") || 
+				strings.Contains(col.Type, "decimal") {
+			idealColWidths[i] = 12
+		} else if strings.Contains(col.Type, "varchar") {
+			// Extract size from varchar(N)
+			size := 20 // Default
+			if start := strings.Index(col.Type, "("); start != -1 {
+				if end := strings.Index(col.Type[start:], ")"); end != -1 {
+					if num, err := strconv.Atoi(col.Type[start+1 : start+end]); err == nil {
+						size = num
+						if size > 30 {
+							size = 30 // Cap at 30 for display
+						}
+					}
+				}
+			}
+			idealColWidths[i] = size
+		} else if strings.Contains(col.Type, "text") {
+			idealColWidths[i] = 30
+		} else {
+			idealColWidths[i] = 15
+		}
+	}
+	
+	// Prepare data rows
+	rows := make([][]string, len(data))
+	for i, row := range data {
+		rows[i] = make([]string, len(headers))
+		
+		for j, col := range metadata {
+			colName := col.Name
+			
+			// Format the value based on its type
+			if val, ok := row[colName]; ok {
+				if val == nil {
+					rows[i][j] = "NULL"
+				} else {
+					switch v := val.(type) {
+					case bool:
+						if v {
+							rows[i][j] = "Yes"
+						} else {
+							rows[i][j] = "No"
+						}
+					case int, int8, int16, int32, int64:
+						rows[i][j] = fmt.Sprintf("%d", v)
+					case float32, float64:
+						rows[i][j] = fmt.Sprintf("%.2f", v)
+					default:
+						rows[i][j] = fmt.Sprintf("%v", v)
+					}
+				}
+			} else {
+				rows[i][j] = ""
+			}
+		}
+	}
+	
+	return m.renderTable(headers, rows, minColWidths, idealColWidths)
+}
+
+// Renders table structure from metadata
+func (m model) renderTableStructure(tableName string) string {
+	metadata, ok := m.tableMetadata[tableName]
+	if (!ok) {
+		return fmt.Sprintf("No metadata available for table: %s", tableName)
+	}
+	
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%s Structure:\n\n", tableName))
+	
+	for _, col := range metadata {
+		nullableStr := "NOT NULL"
+		if col.Nullable {
+			nullableStr = "NULL"
+		}
+		
+		keyStr := ""
+		if col.Key != "" {
+			keyStr = fmt.Sprintf(" (%s)", col.Key)
+		}
+		
+		sb.WriteString(fmt.Sprintf("%s: %s %s%s\n", col.Name, col.Type, nullableStr, keyStr))
+	}
+	
+	return sb.String()
+}
+
+// Renders table indices information
+func (m model) renderTableIndices(tableName string) string {
+	indices, ok := m.tableIndices[tableName]
+	if (!ok) {
+		return fmt.Sprintf("No index information available for table: %s", tableName)
+	}
+	
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%s Indices:\n\n", tableName))
+	
+	for _, idx := range indices {
+		sb.WriteString(fmt.Sprintf("Index: %s\n", idx))
+	}
+	
+	return sb.String()
+}
+
 // Helper methods to render table data
 func (m model) renderUsersTable() string {
 	// Define headers
@@ -744,13 +1118,13 @@ func (m model) renderUsersTable() string {
 	idealColWidths := []int{5, 20, 30, 10} // Preferred widths when space allows
 	
 	// Prepare data rows
-	rows := make([][]string, len(m.users))
-	for i, user := range m.users {
+	rows := make([][]string, len(m.tableData["users"]))
+	for i, user := range m.tableData["users"] {
 		rows[i] = make([]string, 4)
-		rows[i][0] = fmt.Sprintf("%d", user.ID)
-		rows[i][1] = user.Username
-		rows[i][2] = user.Email
-		if user.Active {
+		rows[i][0] = fmt.Sprintf("%d", user["ID"])
+		rows[i][1] = user["Username"].(string)
+		rows[i][2] = user["Email"].(string)
+		if user["Active"].(bool) {
 			rows[i][3] = "Yes"
 		} else {
 			rows[i][3] = "No"
@@ -769,13 +1143,13 @@ func (m model) renderOrdersTable() string {
 	idealColWidths := []int{5, 10, 15, 20} // Preferred widths when space allows
 	
 	// Prepare data rows
-	rows := make([][]string, len(m.orders))
-	for i, order := range m.orders {
+	rows := make([][]string, len(m.tableData["orders"]))
+	for i, order := range m.tableData["orders"] {
 		rows[i] = make([]string, 4)
-		rows[i][0] = fmt.Sprintf("%d", order.ID)
-		rows[i][1] = fmt.Sprintf("%d", order.UserID)
-		rows[i][2] = fmt.Sprintf("$%.2f", order.TotalPrice)
-		rows[i][3] = order.Status
+		rows[i][0] = fmt.Sprintf("%d", order["ID"])
+		rows[i][1] = fmt.Sprintf("%d", order["UserID"])
+		rows[i][2] = fmt.Sprintf("$%.2f", order["TotalPrice"])
+		rows[i][3] = order["Status"].(string)
 	}
 	
 	return m.renderTable(headers, rows, minColWidths, idealColWidths)
@@ -790,13 +1164,13 @@ func (m model) renderProductsTable() string {
 	idealColWidths := []int{5, 25, 15, 20} // Preferred widths when space allows
 	
 	// Prepare data rows
-	rows := make([][]string, len(m.products))
-	for i, product := range m.products {
+	rows := make([][]string, len(m.tableData["products"]))
+	for i, product := range m.tableData["products"] {
 		rows[i] = make([]string, 4)
-		rows[i][0] = fmt.Sprintf("%d", product.ID)
-		rows[i][1] = product.Name
-		rows[i][2] = fmt.Sprintf("$%.2f", product.Price)
-		rows[i][3] = product.Category
+		rows[i][0] = fmt.Sprintf("%d", product["ID"])
+		rows[i][1] = product["Name"].(string)
+		rows[i][2] = fmt.Sprintf("$%.2f", product["Price"])
+		rows[i][3] = product["Category"].(string)
 	}
 	
 	return m.renderTable(headers, rows, minColWidths, idealColWidths)
@@ -811,12 +1185,12 @@ func (m model) renderCategoriesTable() string {
 	idealColWidths := []int{5, 25, 25} // Preferred widths when space allows
 	
 	// Prepare data rows
-	rows := make([][]string, len(m.categories))
-	for i, category := range m.categories {
+	rows := make([][]string, len(m.tableData["categories"]))
+	for i, category := range m.tableData["categories"] {
 		rows[i] = make([]string, 3)
-		rows[i][0] = fmt.Sprintf("%d", category.ID)
-		rows[i][1] = category.Name
-		rows[i][2] = category.Slug
+		rows[i][0] = fmt.Sprintf("%d", category["ID"])
+		rows[i][1] = category["Name"].(string)
+		rows[i][2] = category["Slug"].(string)
 	}
 	
 	return m.renderTable(headers, rows, minColWidths, idealColWidths)
@@ -1066,23 +1440,140 @@ func (m model) renderTable(headers []string, rows [][]string, minColWidths []int
 }
 
 func main() {
-	users, orders, products, categories := initSampleData()
-	m := model{
-		tables:         []string{"users", "orders", "products", "categories"},
-		selectedIdx:    0,
-		activeTableIdx: 0, // Initialize active table index
-		mode:           "Data", // Start with Data view
-		width:          80,     // Default width
-		height:         24,     // Default height
-		focusLeft:      true,   // Start with focus on left box
-		users:          users,
-		orders:         orders,
-		products:       products,
-		categories:     categories,
+	// Default database config
+	config := DBConfig{
+		Host:     "localhost",
+		Port:     3306,
+		User:     "root",
+		Password: "", // You should use environment variables in real applications
+		Database: "test",
 	}
-
-	p := tea.NewProgram(&m, tea.WithAltScreen()) // Fullscreen app
-
+	
+	// Check environment variables for configuration
+	if host := os.Getenv("DB_HOST"); host != "" {
+		config.Host = host
+	}
+	
+	if portStr := os.Getenv("DB_PORT"); portStr != "" {
+		if port, err := strconv.Atoi(portStr); err == nil {
+			config.Port = port
+		}
+	}
+	
+	if user := os.Getenv("DB_USER"); user != "" {
+		config.User = user
+	}
+	
+	if password := os.Getenv("DB_PASSWORD"); password != "" {
+		config.Password = password
+	}
+	
+	if database := os.Getenv("DB_NAME"); database != "" {
+		config.Database = database
+	}
+	
+	fmt.Printf("Connecting to MySQL database at %s:%d with user %s and database %s\n", 
+		config.Host, config.Port, config.User, config.Database)
+	
+	// Initialize the model with database connection
+	m, err := initModel(config)
+	if err != nil {
+		fmt.Printf("Error connecting to database: %v\n", err)
+		fmt.Println("Falling back to sample data...")
+		
+		// Fallback to sample data if database connection fails
+		users, orders, products, categories := initSampleData()
+		m = model{
+			tables:         []string{"users", "orders", "products", "categories"},
+			selectedIdx:    0,
+			activeTableIdx: 0,
+			mode:           "Data",
+			width:          80,
+			height:         24,
+			focusLeft:      true,
+			connected:      true, // Pretend we're connected even though we're using sample data
+			tableData:      make(map[string][]RowData),
+			tableMetadata:  make(map[string][]ColumnMetadata),
+			tableIndices:   make(map[string][]string),
+		}
+		
+		// Convert sample data to RowData format
+		userRows := make([]RowData, len(users))
+		for i, user := range users {
+			userRows[i] = RowData{
+				"ID":       user.ID,
+				"Username": user.Username,
+				"Email":    user.Email,
+				"Active":   user.Active,
+			}
+		}
+		m.tableData["users"] = userRows
+		m.tableMetadata["users"] = []ColumnMetadata{
+			{Name: "ID", Type: "int", Nullable: false, Key: "PRI"},
+			{Name: "Username", Type: "varchar(50)", Nullable: false, Key: "UNI"},
+			{Name: "Email", Type: "varchar(100)", Nullable: false, Key: "UNI"},
+			{Name: "Active", Type: "tinyint(1)", Nullable: false, Key: ""},
+		}
+		m.tableIndices["users"] = []string{"PRIMARY", "idx_username", "idx_email"}
+		
+		// Convert other sample data to RowData format similarly
+		orderRows := make([]RowData, len(orders))
+		for i, order := range orders {
+			orderRows[i] = RowData{
+				"ID":         order.ID,
+				"UserID":     order.UserID,
+				"TotalPrice": order.TotalPrice,
+				"Status":     order.Status,
+			}
+		}
+		m.tableData["orders"] = orderRows
+		m.tableMetadata["orders"] = []ColumnMetadata{
+			{Name: "ID", Type: "int", Nullable: false, Key: "PRI"},
+			{Name: "UserID", Type: "int", Nullable: false, Key: "MUL"},
+			{Name: "TotalPrice", Type: "decimal(10,2)", Nullable: false, Key: ""},
+			{Name: "Status", Type: "varchar(20)", Nullable: false, Key: ""},
+		}
+		m.tableIndices["orders"] = []string{"PRIMARY", "idx_user_id"}
+		
+		// Add products and categories similarly
+		productRows := make([]RowData, len(products))
+		for i, product := range products {
+			productRows[i] = RowData{
+				"ID":       product.ID,
+				"Name":     product.Name,
+				"Price":    product.Price,
+				"Category": product.Category,
+			}
+		}
+		m.tableData["products"] = productRows
+		m.tableMetadata["products"] = []ColumnMetadata{
+			{Name: "ID", Type: "int", Nullable: false, Key: "PRI"},
+			{Name: "Name", Type: "varchar(100)", Nullable: false, Key: ""},
+			{Name: "Price", Type: "decimal(10,2)", Nullable: false, Key: ""},
+			{Name: "Category", Type: "varchar(50)", Nullable: false, Key: "MUL"},
+		}
+		m.tableIndices["products"] = []string{"PRIMARY", "idx_category"}
+		
+		categoryRows := make([]RowData, len(categories))
+		for i, category := range categories {
+			categoryRows[i] = RowData{
+				"ID":   category.ID,
+				"Name": category.Name,
+				"Slug": category.Slug,
+			}
+		}
+		m.tableData["categories"] = categoryRows
+		m.tableMetadata["categories"] = []ColumnMetadata{
+			{Name: "ID", Type: "int", Nullable: false, Key: "PRI"},
+			{Name: "Name", Type: "varchar(50)", Nullable: false, Key: ""},
+			{Name: "Slug", Type: "varchar(50)", Nullable: false, Key: "UNI"},
+		}
+		m.tableIndices["categories"] = []string{"PRIMARY", "idx_slug"}
+	}
+	
+	// Start the application
+	p := tea.NewProgram(&m, tea.WithAltScreen())
+	
 	if err := p.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
