@@ -1,6 +1,9 @@
 package model
 
-import "strconv"
+import (
+	"fmt"
+	"strconv"
+)
 
 // TableMetadata contains metadata about a database table
 type TableMetadata struct {
@@ -114,4 +117,34 @@ func TruncateWithEllipsis(text string, width int) string {
 	}
 	
 	return text[:width-3] + "..."
+}
+
+// FormatValue converts an interface{} value to a string for display
+func FormatValue(val interface{}) string {
+	if val == nil {
+		return "NULL"
+	}
+	switch v := val.(type) {
+	case bool:
+		if v {
+			return "Yes"
+		}
+		return "No"
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return fmt.Sprintf("%d", v)
+	case float32, float64:
+		// Consider using a specific precision if needed, e.g., "%.2f"
+		return fmt.Sprintf("%g", v) // %g is often good for floats
+	case []byte:
+		// Assume byte slices are strings (common in database/sql)
+		return string(v)
+	case string:
+		return v
+	// Add other types as needed, e.g., time.Time
+	// case time.Time:
+	//  return v.Format("2006-01-02 15:04:05")
+	default:
+		// Fallback for other types
+		return fmt.Sprintf("%v", v)
+	}
 }

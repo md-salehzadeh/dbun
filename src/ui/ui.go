@@ -227,21 +227,56 @@ func (s Styles) UpdateStyles(focusLeft bool, mode model.ViewMode) Styles {
 
 // RenderTableList renders the list of tables with selection indicators
 func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx int, scrollPosition int) string {
-	// Calculate how many items we can show based on sidebar height
-	maxVisibleItems := styles.SidebarStyle.GetHeight() - 6 // Account for borders, title, and scroll indicators
-	if maxVisibleItems < 1 {
-		maxVisibleItems = 1
+	// Calculate inner height available for list items
+	// Overhead: TopBorder(1), BottomBorder(1), Title(1), Blank after Title(1), TopScrollIndicator(1/0), BottomScrollIndicator(1/0), Pagination(1/0), Blank before Pagination(1/0)
+	boxInnerHeight := styles.SidebarStyle.GetHeight() - 2 // Account for top/bottom border
+	if boxInnerHeight < 0 { boxInnerHeight = 0 }
+
+	titleHeight := 2 // Title line + blank line after
+	scrollIndicatorHeight := 1 // Each indicator takes 1 line
+
+	// Calculate maxVisibleItems based on available space
+	availableHeight := boxInnerHeight - titleHeight
+	if scrollPosition > 0 {
+		availableHeight -= scrollIndicatorHeight // Space for "↑ Previous"
 	}
-	
+
+	// Estimate footer height to reserve space
+	estimatedFooterHeight := 0
+	// Temporarily calculate max items without footer to see if footer is needed
+	tempMaxItems := availableHeight
+	if tempMaxItems < 0 { tempMaxItems = 0 }
+	tempEndIdx := scrollPosition + tempMaxItems
+	if tempEndIdx < len(tables) {
+		estimatedFooterHeight += scrollIndicatorHeight // "↓ More"
+	}
+	if len(tables) > tempMaxItems { // If total items > estimated visible
+		if estimatedFooterHeight > 0 { // Add blank line before pagination if "↓ More" is shown
+			estimatedFooterHeight += 1
+		}
+		estimatedFooterHeight += 1 // Pagination line
+	}
+	availableHeight -= estimatedFooterHeight
+
+	maxVisibleItems := availableHeight
+	if maxVisibleItems < 0 { maxVisibleItems = 0 } // Cannot be negative
+
+
 	// Calculate which portion of the list to show
 	endIdx := scrollPosition + maxVisibleItems
 	if endIdx > len(tables) {
 		endIdx = len(tables)
 	}
-	
+	// Ensure start index is valid
+	if scrollPosition < 0 { scrollPosition = 0 }
+	if scrollPosition > len(tables) { scrollPosition = len(tables) } // Can be empty if scrolled past end
+	if endIdx < scrollPosition { endIdx = scrollPosition } // Ensure end is not before start
+
+
 	// Prepare content with proper spacing and alignment
 	var content strings.Builder
-	
+	var currentContentHeight int
+
 	// Add title
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -249,79 +284,123 @@ func RenderTableList(styles Styles, tables []string, selectedIdx, activeTableIdx
 		Background(lipgloss.Color("#6A0DAD")). // Purple color for title
 		Width(styles.SidebarStyle.GetWidth() - 4). // Account for border padding
 		Align(lipgloss.Center)
-	
+
 	content.WriteString(titleStyle.Render("TABLES"))
-	content.WriteString("\n")
-	
+	content.WriteString("\n") // Blank line after title
+	currentContentHeight += 2
+
 	// Add scroll indicator if needed
 	if scrollPosition > 0 {
 		indicatorStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#AAAAAA")).
 			Align(lipgloss.Center).
 			Width(styles.SidebarStyle.GetWidth() - 4)
-		
+
 		content.WriteString(indicatorStyle.Render("↑ Previous"))
 		content.WriteString("\n")
+		currentContentHeight += 1
 	}
-	
+
 	// Show visible table entries
+	numItemsRendered := 0
 	for i := scrollPosition; i < endIdx; i++ {
 		var lineStyle lipgloss.Style
 		cursor := " " // Default cursor
-		
+
+		// Determine style based on selection and active state
+		itemStyleWidth := styles.SidebarStyle.GetWidth() - 6 // Account for border, padding, and cursor
+		if itemStyleWidth < 1 { itemStyleWidth = 1 }
+
 		if selectedIdx == i && activeTableIdx == i {
-			cursor = "●"
-			lineStyle = styles.ActiveItemStyle.Copy().Bold(true).
-				Width(styles.SidebarStyle.GetWidth() - 6) // Account for border and cursor
+			cursor = "●" // Active and selected
+			lineStyle = styles.ActiveItemStyle.Copy().Bold(true).Width(itemStyleWidth)
 		} else if selectedIdx == i {
-			cursor = ">"
-			lineStyle = styles.SelectedItemStyle.Copy().Bold(true).
-				Width(styles.SidebarStyle.GetWidth() - 6)
+			cursor = ">" // Just selected
+			lineStyle = styles.SelectedItemStyle.Copy().Bold(true).Width(itemStyleWidth)
 		} else if activeTableIdx == i {
-			cursor = " "
-			lineStyle = styles.ActiveItemStyle.Copy().
-				Width(styles.SidebarStyle.GetWidth() - 6)
+			cursor = " " // Just active (can happen if selection moved away?) - Use ActiveItemStyle
+			lineStyle = styles.ActiveItemStyle.Copy().Width(itemStyleWidth)
 		} else {
-			cursor = " "
-			lineStyle = styles.NormalItemStyle.Copy().
-				Width(styles.SidebarStyle.GetWidth() - 6)
+			cursor = " " // Normal item
+			lineStyle = styles.NormalItemStyle.Copy().Width(itemStyleWidth)
 		}
-		
+
 		// Create a fixed-width table name
 		tableName := tables[i]
-		if len(tableName) > styles.SidebarStyle.GetWidth() - 8 {
-			tableName = model.TruncateWithEllipsis(tableName, styles.SidebarStyle.GetWidth() - 8)
-		}
-		
-		content.WriteString(fmt.Sprintf("%s %s\n", cursor, lineStyle.Render(tableName)))
+		// Truncate based on the style's width calculation
+		// Subtract cursor width (1) and space (1)
+		maxTextWidth := itemStyleWidth - 2
+		if maxTextWidth < 0 { maxTextWidth = 0 }
+		truncatedTableName := model.TruncateWithEllipsis(tableName, maxTextWidth)
+
+		// Render the line
+		content.WriteString(fmt.Sprintf("%s %s\n", cursor, lineStyle.Render(truncatedTableName)))
+		currentContentHeight += 1
+		numItemsRendered++
 	}
-	
+
+	// --- Footer Section ---
+	var footerBuilder strings.Builder
+	footerHeight := 0
+
 	// Add scroll indicator if there are more items below
-	if endIdx < len(tables) {
+	showMoreIndicator := endIdx < len(tables)
+	if showMoreIndicator {
 		indicatorStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#AAAAAA")).
 			Align(lipgloss.Center).
 			Width(styles.SidebarStyle.GetWidth() - 4)
-		
-		content.WriteString(indicatorStyle.Render("↓ More"))
+
+		footerBuilder.WriteString(indicatorStyle.Render("↓ More") + "\n")
+		footerHeight += 1
 	}
-	
+
 	// Add pagination info
-	if len(tables) > maxVisibleItems {
+	// Show pagination if total items > number actually rendered OR if we are scrolled
+	showPagination := len(tables) > numItemsRendered || scrollPosition > 0
+	if showPagination && len(tables) > 0 { // Also check if there are any tables
 		paginationStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#999999")).
 			Align(lipgloss.Center).
 			Width(styles.SidebarStyle.GetWidth() - 4)
-		
-		paginationText := fmt.Sprintf("%d-%d of %d", 
-			scrollPosition+1, 
-			min(scrollPosition+maxVisibleItems, len(tables)), 
+
+		paginationText := fmt.Sprintf("%d-%d of %d",
+			scrollPosition+1,
+			min(scrollPosition+numItemsRendered, len(tables)), // Use actual rendered count
 			len(tables))
-		content.WriteString("\n")
-		content.WriteString(paginationStyle.Render(paginationText))
+
+		// Add blank line before pagination only if "↓ More" indicator is also shown
+		if showMoreIndicator {
+			footerBuilder.WriteString("\n")
+			footerHeight += 1
+		}
+		footerBuilder.WriteString(paginationStyle.Render(paginationText)) // No newline needed if it's the last line
+		footerHeight += 1
 	}
-	
-	return styles.SidebarStyle.Render(content.String())
+	footerContent := footerBuilder.String()
+
+	// --- Combine and Pad ---
+	// Calculate remaining space to fill
+	remainingHeight := boxInnerHeight - currentContentHeight - footerHeight
+	if remainingHeight < 0 { remainingHeight = 0 }
+
+	// Add blank lines between items and footer
+	content.WriteString(strings.Repeat("\n", remainingHeight))
+
+	// Add the footer content
+	content.WriteString(footerContent)
+
+	// Render the final sidebar content within its style
+	// Note: SidebarStyle already includes Padding(0, 1)
+	finalContentStr := content.String()
+	// Ensure the final string doesn't exceed the inner height due to edge cases
+	finalLines := strings.Split(finalContentStr, "\n")
+	if len(finalLines) > boxInnerHeight {
+		finalContentStr = strings.Join(finalLines[:boxInnerHeight], "\n")
+	}
+
+
+	return styles.SidebarStyle.Render(finalContentStr)
 }
 
 // RenderStatusBar renders the application status bar
@@ -513,196 +592,201 @@ func RenderTable(styles Styles, mainBoxWidth int,
 }
 
 // RenderTableData formats table data into a displayable format with scrolling
-func RenderTableData(styles Styles, mainBoxWidth int, 
-                     tableName string, 
-                     metadata []model.ColumnMetadata, 
+func RenderTableData(styles Styles, mainBoxWidth int,
+                     tableName string,
+                     metadata []model.ColumnMetadata,
                      data []model.RowData,
-                     cursorRow, cursorCol int, 
+                     cursorRow, cursorCol int,
                      focusLeft, editing bool,
                      editBuffer string,
                      scrollPosition int) string {
-	
-	if len(metadata) == 0 || len(data) == 0 {
-		return fmt.Sprintf("No data available for table: %s", tableName)
+
+	// Calculate inner height available for rows
+	boxInnerHeight := styles.MainBoxStyle.GetHeight() - 2 // Subtract top/bottom border of MainBoxStyle
+	if boxInnerHeight < 0 { boxInnerHeight = 0 }
+	// Overhead: Title(1), Blank(2), TableHeader(1), TableBorders(2), Blank(1), ScrollInfo(1) = 8 lines
+	fixedOverhead := 8
+	maxVisibleRows := boxInnerHeight - fixedOverhead
+	if maxVisibleRows < 0 { // Ensure it's not negative
+		maxVisibleRows = 0
 	}
-	
-	// Create headers from metadata
-	headers := make([]string, len(metadata))
-	for i, col := range metadata {
-		headers[i] = strings.ToUpper(col.Name)
-	}
-	
-	// Define minimum and ideal column widths
-	minColWidths := make([]int, len(headers))
-	idealColWidths := make([]int, len(headers))
-	
-	for i, col := range metadata {
-		// Set minimum width based on header length
-		headerLen := len(col.Name)
-		if headerLen < 3 {
-			minColWidths[i] = 3
-		} else {
-			minColWidths[i] = headerLen
-		}
-		
-		// Set ideal width based on data type
-		if strings.Contains(col.Type, "int") {
-			idealColWidths[i] = 8
-		} else if strings.Contains(col.Type, "float") || 
-				strings.Contains(col.Type, "double") || 
-				strings.Contains(col.Type, "decimal") {
-			idealColWidths[i] = 12
-		} else if strings.Contains(col.Type, "varchar") {
-			// Extract size from varchar(N)
-			size := 20 // Default
-			if start := strings.Index(col.Type, "("); start != -1 {
-				if end := strings.Index(col.Type[start:], ")"); end != -1 {
-					if num, err := model.ParseInt(col.Type[start+1 : start+end]); err == nil {
-						size = num
-						if size > 30 {
-							size = 30 // Cap at 30 for display
-						}
-					}
-				}
-			}
-			idealColWidths[i] = size
-		} else if strings.Contains(col.Type, "text") {
-			idealColWidths[i] = 30
-		} else {
-			idealColWidths[i] = 15
-		}
-	}
-	
-	// Calculate how many rows we can show based on main box height
-	maxVisibleRows := styles.MainBoxStyle.GetHeight() - 8 // Account for borders, header, title, and footer
-	if maxVisibleRows < 1 {
-		maxVisibleRows = 1
-	}
-	
-	// Apply scrolling - only show visible rows
-	visibleData := data
-	if scrollPosition >= 0 && len(data) > maxVisibleRows {
-		endPos := scrollPosition + maxVisibleRows
-		if endPos > len(data) {
-			endPos = len(data)
-		}
-		
-		if scrollPosition < len(data) {
-			visibleData = data[scrollPosition:endPos]
-		} else {
-			visibleData = []model.RowData{}
-		}
-	}
-	
-	// Prepare data rows for visible data
-	rows := make([][]string, len(visibleData))
-	for i, row := range visibleData {
-		rows[i] = make([]string, len(headers))
-		
-		for j, col := range metadata {
-			colName := col.Name
-			
-			// Format the value based on its type
-			if val, ok := row[colName]; ok {
-				if val == nil {
-					rows[i][j] = "NULL"
-				} else {
-					switch v := val.(type) {
-					case bool:
-						if v {
-							rows[i][j] = "Yes"
-						} else {
-							rows[i][j] = "No"
-						}
-					case int, int8, int16, int32, int64:
-						rows[i][j] = fmt.Sprintf("%d", v)
-					case float32, float64:
-						rows[i][j] = fmt.Sprintf("%.2f", v)
-					default:
-						rows[i][j] = fmt.Sprintf("%v", v)
-					}
-				}
-			} else {
-				rows[i][j] = ""
-			}
-		}
-	}
-	
-	// Adjust cursor row for scrolling when rendering
-	adjustedCursorRow := cursorRow - scrollPosition
-	if adjustedCursorRow < 0 {
-		adjustedCursorRow = 0
-	}
-	if adjustedCursorRow >= len(rows) {
-		adjustedCursorRow = len(rows) - 1
-		if adjustedCursorRow < 0 {
-			adjustedCursorRow = 0
-		}
-	}
-	
-	// Construct output
-	var sb strings.Builder
-	
-	// Add table name as title
+
+	// --- Title ---
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FFFFFF")).
 		Background(lipgloss.Color("#1E90FF")).
 		Padding(0, 1).
 		Align(lipgloss.Center).
-		Width(mainBoxWidth - 4)
-		
-	sb.WriteString(titleStyle.Render(tableName))
-	sb.WriteString("\n\n")
-	
-	// Render the table with scroll adjustment
-	table := RenderTable(styles, mainBoxWidth - 4, headers, rows, 
-		minColWidths, idealColWidths, 
-		adjustedCursorRow, cursorCol, 
+		Width(mainBoxWidth - 4) // Account for MainBoxStyle padding
+
+	titleContent := titleStyle.Render(tableName) + "\n\n" // Title + 2 blank lines
+	currentContentHeight := 3
+
+	// --- Handle No Metadata or No Data ---
+	if len(metadata) == 0 {
+		message := "No structure available for this table."
+		noDataStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#AAAAAA")).Align(lipgloss.Center).Width(mainBoxWidth - 4)
+		messageContent := noDataStyle.Render(message)
+		currentContentHeight += 1 // For the message line
+
+		blanksNeeded := boxInnerHeight - currentContentHeight
+		if blanksNeeded < 0 { blanksNeeded = 0 }
+		return titleContent + messageContent + strings.Repeat("\n", blanksNeeded)
+	}
+
+	// Create headers from metadata
+	headers := make([]string, len(metadata))
+	for i, col := range metadata {
+		headers[i] = strings.ToUpper(col.Name)
+	}
+
+	// Define minimum and ideal column widths
+	minColWidths := make([]int, len(headers))
+	idealColWidths := make([]int, len(headers))
+	for i, col := range metadata {
+		headerLen := len(col.Name)
+		minColWidths[i] = max(3, headerLen) // Min width is 3 or header length
+
+		// Ideal width logic (simplified)
+		idealColWidths[i] = 15 // Default
+		if strings.Contains(col.Type, "int") { idealColWidths[i] = 8 }
+		if strings.Contains(col.Type, "float") || strings.Contains(col.Type, "double") || strings.Contains(col.Type, "decimal") { idealColWidths[i] = 12 }
+		if strings.Contains(col.Type, "varchar") { idealColWidths[i] = 25 } // Adjust as needed
+		if strings.Contains(col.Type, "text") { idealColWidths[i] = 30 }
+		idealColWidths[i] = max(minColWidths[i], idealColWidths[i]) // Ideal >= Min
+	}
+
+
+	if len(data) == 0 {
+		// Render empty table (just header) + "No data" message
+		emptyRows := [][]string{}
+		tableContent := RenderTable(styles, mainBoxWidth - 4, headers, emptyRows,
+			minColWidths, idealColWidths,
+			-1, -1, focusLeft, false, "",
+		)
+		noDataStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#AAAAAA")).Align(lipgloss.Center).Width(mainBoxWidth - 4)
+		noDataMessage := noDataStyle.Render("No data to display")
+
+		// Calculate height: Table(Header(1)+Borders(2)) + Blank(1) + NoDataMsg(1) = 5 lines
+		tableSectionHeight := 5
+		currentContentHeight += tableSectionHeight
+
+		blanksNeeded := boxInnerHeight - currentContentHeight
+		if blanksNeeded < 0 { blanksNeeded = 0 }
+
+		return titleContent + tableContent + "\n" + noDataMessage + strings.Repeat("\n", blanksNeeded)
+	}
+
+
+	// --- Apply Scrolling ---
+	visibleData := data
+	if scrollPosition < 0 { scrollPosition = 0 } // Ensure scroll is not negative
+
+	endPos := scrollPosition + maxVisibleRows
+	if endPos > len(data) {
+		endPos = len(data)
+	}
+
+	// Adjust scrollPosition if it's past the end
+	if scrollPosition >= len(data) {
+		scrollPosition = max(0, len(data)-maxVisibleRows) // Go to last possible page
+		endPos = len(data)
+	}
+
+	// Ensure end is after start
+	if endPos < scrollPosition { endPos = scrollPosition }
+
+	visibleData = data[scrollPosition:endPos]
+	numVisibleRows := len(visibleData)
+
+
+	// --- Prepare Data Rows ---
+	rows := make([][]string, numVisibleRows)
+	for i, rowData := range visibleData {
+		rows[i] = make([]string, len(headers))
+		for j, col := range metadata {
+			colName := col.Name
+			if val, ok := rowData[colName]; ok {
+				rows[i][j] = model.FormatValue(val) // Use a helper for consistent formatting
+			} else {
+				rows[i][j] = ""
+			}
+		}
+	}
+
+	// --- Adjust Cursor ---
+	adjustedCursorRow := cursorRow - scrollPosition
+	if adjustedCursorRow < 0 || adjustedCursorRow >= numVisibleRows {
+		adjustedCursorRow = -1 // Cursor is not visible
+	}
+
+
+	// --- Render Table ---
+	tableContent := RenderTable(styles, mainBoxWidth - 4, headers, rows,
+		minColWidths, idealColWidths,
+		adjustedCursorRow, cursorCol,
 		focusLeft, editing, editBuffer)
-	
-	sb.WriteString(table)
-	sb.WriteString("\n")
-	
-	// Add scroll info footer
+	// Table height: Header(1) + Rows(numVisibleRows) + Borders(2) = numVisibleRows + 3
+	tableHeight := numVisibleRows + 3
+	currentContentHeight += tableHeight
+
+
+	// --- Footer / Scroll Info ---
+	var footerBuilder strings.Builder
+	footerHeight := 0
+
 	scrollInfoStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#AAAAAA")).
-		Align(lipgloss.Left).
-		PaddingTop(1)
-	
+		Align(lipgloss.Left)
+
 	totalRows := len(data)
 	currentStart := scrollPosition + 1
-	currentEnd := scrollPosition + len(visibleData)
-	
-	var scrollInfo string
-	if totalRows > maxVisibleRows {
+	currentEnd := scrollPosition + numVisibleRows
+
+	// Show scroll info if needed
+	showScrollInfo := totalRows > maxVisibleRows || scrollPosition > 0
+	if showScrollInfo {
 		var indicators []string
-		
-		// Add "Previous" indicator if needed
-		if scrollPosition > 0 {
-			indicators = append(indicators, "↑ Previous")
-		}
-		
-		// Add "More" indicator if needed
-		if currentEnd < totalRows {
-			indicators = append(indicators, "↓ More")
-		}
-		
-		// Create pagination info
+		if scrollPosition > 0 { indicators = append(indicators, "↑ Prev") }
+		if currentEnd < totalRows { indicators = append(indicators, "↓ More") }
+
 		paginationInfo := fmt.Sprintf("Rows %d-%d of %d", currentStart, currentEnd, totalRows)
-		
+
+		scrollInfo := paginationInfo
 		if len(indicators) > 0 {
 			scrollInfo = strings.Join(indicators, " | ") + "   " + paginationInfo
-		} else {
-			scrollInfo = paginationInfo
 		}
+		footerBuilder.WriteString(scrollInfoStyle.Render(scrollInfo))
+		footerHeight = 1 // Scroll info takes 1 line
+	} else {
+		// If no scroll info, we still need a line for consistent height calculation (blank line after table)
+		footerHeight = 1
 	}
-	
-	if scrollInfo != "" {
-		sb.WriteString(scrollInfoStyle.Render(scrollInfo))
+	currentContentHeight += footerHeight // Account for the line after table (either scroll info or blank)
+
+
+	// --- Combine and Pad ---
+	var finalContent strings.Builder
+	finalContent.WriteString(titleContent)
+	finalContent.WriteString(tableContent)
+	finalContent.WriteString("\n") // Blank line OR line where footer starts
+	finalContent.WriteString(footerBuilder.String())
+
+	// Add padding lines if needed
+	blanksNeeded := boxInnerHeight - currentContentHeight
+	if blanksNeeded > 0 {
+		finalContent.WriteString(strings.Repeat("\n", blanksNeeded))
 	}
-	
-	return sb.String()
+
+	// Final safety check: Truncate if somehow too long
+	finalStr := finalContent.String()
+	finalLines := strings.Split(finalStr, "\n")
+	if len(finalLines) > boxInnerHeight {
+		finalStr = strings.Join(finalLines[:boxInnerHeight], "\n")
+	}
+
+	return finalStr
 }
 
 // RenderTableStructure renders a table's structure information with scrolling
@@ -976,6 +1060,14 @@ func RenderTableIndices(tableName string, indices []string, scrollPosition int) 
 // Helper function to find minimum of two integers
 func min(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+// Helper function to find maximum of two integers
+func max(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b
