@@ -128,7 +128,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		// Switch focus between left and right boxes
-		case "1", "h":
+		case "1":
 			m.focusLeft = true
 			// Reset editing state when switching focus
 			if m.editing {
@@ -137,7 +137,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "2", "l":
+		case "2":
 			m.focusLeft = false
 			return m, nil
 
@@ -227,12 +227,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.cursorRow++
 					}
 					return m, nil
-				case "left", "b":
+				case "left", "h":
 					if m.cursorCol > 0 {
 						m.cursorCol--
 					}
 					return m, nil
-				case "right", "f":
+				case "right", "l":
 					// Max columns depends on the current table
 					var maxCols int
 					switch m.tables[m.activeTableIdx] {
