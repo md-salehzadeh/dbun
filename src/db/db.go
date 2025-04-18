@@ -40,8 +40,8 @@ func (m *Manager) Close() error {
 
 // Initialize the database connection
 func initDB(config config.DBConfig) (*sql.DB, error) {
-	// Format DSN (Data Source Name)
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
+	// Format DSN (Data Source Name) with UTF-8 character set parameters
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true&charset=utf8mb4&collation=utf8mb4_unicode_ci",
 		config.User, config.Password, config.Host, config.Port, config.Database)
 
 	// Open connection
@@ -54,6 +54,12 @@ func initDB(config config.DBConfig) (*sql.DB, error) {
 	err = db.Ping()
 	if err != nil {
 		return nil, fmt.Errorf("error pinging database: %v", err)
+	}
+
+	// Set connection parameters for proper UTF-8 handling
+	_, err = db.Exec("SET NAMES utf8mb4")
+	if err != nil {
+		return nil, fmt.Errorf("error setting character set: %v", err)
 	}
 
 	return db, nil
