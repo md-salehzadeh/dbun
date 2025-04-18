@@ -516,7 +516,8 @@ func RenderTable(styles Styles, mainBoxWidth int,
                 minColWidths, idealColWidths []int,
                 cursorRow, cursorCol int, 
                 focusLeft, editing bool,
-                editBuffer string) string {
+                editBuffer string,
+                scrollPosition int) string { // Added scrollPosition parameter
 	
 	var sb strings.Builder
 	
@@ -542,7 +543,9 @@ func RenderTable(styles Styles, mainBoxWidth int,
 		
 		// Choose style based on row (alternating)
 		rowStyle := styles.CellStyle
-		if i%2 == 1 {
+		// Use absolute row index for alternating style
+		absoluteRowIndex := scrollPosition + i 
+		if absoluteRowIndex%2 == 1 { 
 			rowStyle = styles.AltRowStyle
 		}
 		
@@ -552,7 +555,8 @@ func RenderTable(styles Styles, mainBoxWidth int,
 			
 			// Apply appropriate style based on selection/editing state
 			styleToUse := rowStyle
-			if !focusLeft && cursorRow == i && cursorCol == j {
+			// Compare with relative cursorRow (adjustedCursorRow passed to this function)
+			if !focusLeft && cursorRow == i && cursorCol == j { 
 				if editing {
 					// Show edit buffer when editing
 					editText := model.TruncateWithEllipsis(editBuffer, colWidths[j])
@@ -565,8 +569,8 @@ func RenderTable(styles Styles, mainBoxWidth int,
 			cells[j] = styleToUse.Copy().Width(colWidths[j]).Render(cellContent)
 		}
 		
-		// Add row number with consistent width
-		rowNum := styles.RowNumStyle.Copy().Width(4).Render(fmt.Sprintf("%d", i+1))
+		// Add row number with consistent width, using absolute row index
+		rowNum := styles.RowNumStyle.Copy().Width(4).Render(fmt.Sprintf("%d", absoluteRowIndex+1)) 
 		dataRows[i] = lipgloss.JoinHorizontal(lipgloss.Top, rowNum, lipgloss.JoinHorizontal(lipgloss.Top, cells...))
 	}
 	
@@ -664,6 +668,7 @@ func RenderTableData(styles Styles, mainBoxWidth int,
 		tableContent := RenderTable(styles, mainBoxWidth - 4, headers, emptyRows,
 			minColWidths, idealColWidths,
 			-1, -1, focusLeft, false, "",
+			0, // Pass 0 for scrollPosition when no data
 		)
 		noDataStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#AAAAAA")).Align(lipgloss.Center).Width(mainBoxWidth - 4)
 		noDataMessage := noDataStyle.Render("No data to display")
@@ -726,7 +731,9 @@ func RenderTableData(styles Styles, mainBoxWidth int,
 	tableContent := RenderTable(styles, mainBoxWidth - 4, headers, rows,
 		minColWidths, idealColWidths,
 		adjustedCursorRow, cursorCol,
-		focusLeft, editing, editBuffer)
+		focusLeft, editing, editBuffer,
+		scrollPosition, // Pass the actual scrollPosition
+	)
 	// Table height: Header(1) + Rows(numVisibleRows) + Borders(2) = numVisibleRows + 3
 	tableHeight := numVisibleRows + 3
 	currentContentHeight += tableHeight
