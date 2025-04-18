@@ -1072,3 +1072,55 @@ func max(a, b int) int {
 	}
 	return b
 }
+
+// RenderEditModal renders a floating modal for editing cell data
+func RenderEditModal(styles Styles, termWidth, termHeight int, fieldName, editBuffer string) string {
+	// Define modal dimensions (relative to terminal size)
+	modalWidth := min(termWidth-10, 60) // Max 60 chars wide, or less if terminal is small
+	// Simple height for now, could be dynamic later
+	modalHeight := 7
+
+	// Style for the modal box
+	modalStyle := lipgloss.NewStyle().
+		Width(modalWidth).
+		Height(modalHeight).
+		Border(lipgloss.DoubleBorder(), true).
+		BorderForeground(styles.ActiveBorderColor). // Use active color
+		Padding(1, 2).
+		Background(lipgloss.Color("#333333")) // Dark background
+
+	// Title
+	title := fmt.Sprintf("Edit %s", fieldName)
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFFFFF"))
+	titleLine := titleStyle.Render(model.TruncateWithEllipsis(title, modalWidth-4)) // Truncate title if needed
+
+	// Edit area - show the buffer content
+	// Simple single-line editor for now
+	editAreaStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("#444444")). // Slightly different background for input
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
+
+	// Display buffer with a cursor indicator (simple pipe char)
+	// Truncate if too long for the modal width
+	maxEditTextWidth := modalWidth - 4 // Account for padding
+	displayBuffer := model.TruncateWithEllipsis(editBuffer, maxEditTextWidth-1) + "|" // Add cursor
+	editLine := editAreaStyle.Width(maxEditTextWidth).Render(displayBuffer)
+
+
+	// Help text
+	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#AAAAAA")).Italic(true)
+	helpLine := helpStyle.Render("Enter: Save | Esc: Cancel")
+
+	// Combine modal content
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		titleLine,
+		"", // Spacer
+		editLine,
+		"", // Spacer
+		helpLine,
+	)
+
+	// Render the modal box with content
+	return modalStyle.Render(content)
+}

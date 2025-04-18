@@ -45,6 +45,9 @@ type AppModel struct {
 	editBuffer    string
 	editingField  string
 	showEditHelp  bool
+	showEditModal bool // New: Flag for modal visibility
+	modalTargetRow int // New: Target row for modal edit
+	modalTargetCol int // New: Target col for modal edit
 }
 
 // Initialize the app model with database connection
@@ -235,6 +238,11 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // Handle key presses based on current state
 func (m *AppModel) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle modal input first if it's active
+	if m.showEditModal {
+		return m.handleEditModalKeys(msg)
+	}
+
 	// Handle global keys first
 	switch msg.String() {
 	case "ctrl+c", "q":
@@ -549,16 +557,19 @@ func (m *AppModel) handleRightPanelKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "enter", "e":
-			// Enter edit mode for the current cell
-			return m.enterEditMode(), nil
+			// Enter INLINE edit mode for the current cell
+			return m.enterInlineEditMode(), nil
+		case "ctrl+e":
+			// Enter MODAL edit mode for the current cell
+			return m.enterModalEditMode(), nil
 		}
 	}
 	
 	return m, nil
 }
 
-// Enter edit mode for the current cell
-func (m *AppModel) enterEditMode() tea.Model {
+// Enter INLINE edit mode for the current cell
+func (m *AppModel) enterInlineEditMode() tea.Model {
 	// Only allow editing in data mode
 	if m.mode != model.DataMode {
 		return m
@@ -566,10 +577,67 @@ func (m *AppModel) enterEditMode() tea.Model {
 	
 	// Set editing flag and prepare edit buffer
 	m.editing = true
+	m.showEditModal = false // Ensure modal is not shown
 	m.editBuffer = m.getCurrentCellValue()
 	m.editingField = m.getCurrentFieldName()
 	
 	return m
+}
+
+
+// Enter MODAL edit mode for the current cell
+func (m *AppModel) enterModalEditMode() tea.Model {
+	// Only allow editing in data mode
+	if m.mode != model.DataMode {
+		return m
+	}
+
+	// Set editing and modal flags, prepare buffer, store target
+	m.editing = true
+	m.showEditModal = true
+	m.editBuffer = m.getCurrentCellValue()
+	m.editingField = m.getCurrentFieldName()
+	m.modalTargetRow = m.cursorRow // Store original cursor position
+	m.modalTargetCol = m.cursorCol
+
+	return m
+}
+
+// Handle keys when in modal edit mode
+func (m *AppModel) handleEditModalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		// Cancel modal edit
+		m.editing = false
+		m.showEditModal = false
+		m.editBuffer = ""
+		return m, nil
+
+	case "enter":
+		// Submit modal edit
+		m.applyEdit() // applyEdit will now use modalTargetRow/Col
+		m.editing = false
+		m.showEditModal = false
+		m.editBuffer = ""
+		return m, nil
+
+	case "backspace":
+		// Delete last character in modal
+		if len(m.editBuffer) > 0 {
+			// Handle multi-byte characters correctly if necessary (simple approach here)
+			// For simplicity, assuming simple runes or ASCII
+			m.editBuffer = m.editBuffer[:len(m.editBuffer)-1]
+		}
+		return m, nil
+
+	default:
+		// Add character to modal edit buffer
+		// Consider adding rune handling for broader character support
+		if len(msg.String()) == 1 { // Basic check, might need refinement for complex inputs
+			m.editBuffer += msg.String()
+		}
+		return m, nil
+	}
 }
 
 // Get the name of the current field being edited
@@ -632,6 +700,16 @@ func (m *AppModel) getCurrentCellValue() string {
 
 // Apply the edit to the current cell
 func (m *AppModel) applyEdit() {
+	targetRow := m.cursorRow
+	targetCol := m.cursorCol
+
+	// If the edit came from the modal, use the stored target coordinates
+	if m.showEditModal {
+		targetRow = m.modalTargetRow
+		targetCol = m.modalTargetCol
+	}
+
+
 	if m.activeTableIdx < 0 || m.activeTableIdx >= len(m.tables) {
 		return
 	}
@@ -642,15 +720,16 @@ func (m *AppModel) applyEdit() {
 	data, dataOk := m.tableData[table]
 	metadata, metaOk := m.tableMetadata[table]
 	
-	if !dataOk || !metaOk || m.cursorRow >= len(data) || m.cursorCol >= len(metadata) {
+	// Use targetRow/targetCol for validation and access
+	if !dataOk || !metaOk || targetRow >= len(data) || targetCol >= len(metadata) {
 		return
 	}
 	
-	colName := metadata[m.cursorCol].Name
-	colType := metadata[m.cursorCol].Type
+	colName := metadata[targetCol].Name
+	colType := metadata[targetCol].Type
 	
 	// Get the row
-	row := data[m.cursorRow]
+	row := data[targetRow]
 	
 	// Parse the edited value based on column type
 	var newValue interface{}
@@ -683,7 +762,7 @@ func (m *AppModel) applyEdit() {
 	
 	// Update the value in memory (not in the database)
 	row[colName] = newValue
-	data[m.cursorRow] = row
+	data[targetRow] = row // Use targetRow
 	m.tableData[table] = data
 }
 
@@ -794,6 +873,16 @@ func (m AppModel) View() string {
 			doc.WriteString(helpStyle.Render("Editing: Type to modify | Submit: Enter | Cancel: Esc"))
 		}
 	}
+
+	// Render the modal if active
+	if m.showEditModal {
+		modalView := ui.RenderEditModal(styles, m.width, m.height, m.editingField, m.editBuffer)
+		// Place the modal centered on top of the existing layout
+		// We need to join the layout and modal correctly. Lipgloss Place is good for this.
+		finalView := lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modalView, lipgloss.WithWhitespaceChars(" "))
+		return finalView // Return the view with the modal overlay
+	}
+
 
 	return doc.String()
 }
